@@ -1064,7 +1064,7 @@ describe('web UI components', () => {
     }
 
     const user = userEvent.setup();
-    const tokenInput = screen.getByLabelText('Server access token');
+    const tokenInput = screen.getByLabelText('Server access password');
     await user.type(tokenInput, 'new-token');
 
     expect(tokenInput).toHaveValue('new-token');
@@ -1431,8 +1431,11 @@ describe('web UI components', () => {
           source={mockSource.source}
           statistics={mockStats}
           rescanBusy={false}
+          accessPassword="saved-password"
           onClose={onClose}
           onRescan={vi.fn()}
+          onAccessPasswordChange={vi.fn()}
+          onForgetAccessPassword={vi.fn()}
         />
       </>
     );
@@ -1451,8 +1454,11 @@ describe('web UI components', () => {
           source={mockSource.source}
           statistics={mockStats}
           rescanBusy={false}
+          accessPassword="saved-password"
           onClose={nextOnClose}
           onRescan={vi.fn()}
+          onAccessPasswordChange={vi.fn()}
+          onForgetAccessPassword={vi.fn()}
         />
       </>
     );
@@ -1890,14 +1896,49 @@ describe('web UI components', () => {
           totalCatalogSizeBytes: 4096
         } : undefined}
         rescanBusy={false}
+        accessPassword="saved-password"
         onClose={vi.fn()}
         onRescan={onRescan}
+        onAccessPasswordChange={vi.fn()}
+        onForgetAccessPassword={vi.fn()}
       />
     );
 
     expect(screen.getByRole('heading', { name: 'Catalog information' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Rescan' }));
     expect(onRescan).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an access-password draft until save and can forget the stored password', async () => {
+    const user = userEvent.setup();
+    const onAccessPasswordChange = vi.fn();
+    const onForgetAccessPassword = vi.fn();
+    render(
+      <SettingsDialog
+        status={mockStatus}
+        source={mockSource.source}
+        statistics={mockStats}
+        rescanBusy={false}
+        accessPassword="saved-password"
+        onClose={vi.fn()}
+        onRescan={vi.fn()}
+        onAccessPasswordChange={onAccessPasswordChange}
+        onForgetAccessPassword={onForgetAccessPassword}
+      />
+    );
+
+    const passwordInput = screen.getByLabelText('Access password');
+    expect(passwordInput).toHaveAttribute('type', 'password');
+    fireEvent.change(passwordInput, { target: { value: 'next-password' } });
+    expect(onAccessPasswordChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Show access password' }));
+    expect(passwordInput).toHaveAttribute('type', 'text');
+    await user.click(screen.getByRole('button', { name: 'Save password' }));
+    expect(onAccessPasswordChange).toHaveBeenCalledWith('next-password');
+
+    await user.click(screen.getByRole('button', { name: 'Forget on this device' }));
+    expect(onForgetAccessPassword).toHaveBeenCalledTimes(1);
   });
 
   it('distinguishes unavailable and changed source states in settings', () => {
@@ -1907,8 +1948,11 @@ describe('web UI components', () => {
         source={{ ...mockSource.source!, available: false, requiresRescan: false }}
         statistics={mockStats}
         rescanBusy={false}
+        accessPassword="saved-password"
         onClose={vi.fn()}
         onRescan={vi.fn()}
+        onAccessPasswordChange={vi.fn()}
+        onForgetAccessPassword={vi.fn()}
       />
     );
 
@@ -1920,8 +1964,11 @@ describe('web UI components', () => {
         source={{ ...mockSource.source!, available: false, requiresRescan: true }}
         statistics={mockStats}
         rescanBusy={false}
+        accessPassword="saved-password"
         onClose={vi.fn()}
         onRescan={vi.fn()}
+        onAccessPasswordChange={vi.fn()}
+        onForgetAccessPassword={vi.fn()}
       />
     );
 
@@ -1942,8 +1989,11 @@ describe('web UI components', () => {
         source={mockSource.source}
         statistics={mockStats}
         rescanBusy={false}
+        accessPassword="saved-password"
         onClose={vi.fn()}
         onRescan={onRescan}
+        onAccessPasswordChange={vi.fn()}
+        onForgetAccessPassword={vi.fn()}
       />
     );
 

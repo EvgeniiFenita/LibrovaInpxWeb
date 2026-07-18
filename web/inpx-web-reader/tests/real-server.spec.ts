@@ -61,7 +61,7 @@ test('built browser UI exercises authenticated catalog details downloads and res
 
   await page.goto('/');
   await expect(page.getByRole('dialog', { name: 'Server access' })).toBeVisible();
-  await page.getByLabel('Server access token').fill(token);
+  await page.getByLabel('Server access password').fill(token);
   await page.getByRole('button', { name: 'Unlock catalog' }).click();
   await expect(page.getByRole('heading', { name: 'InpxWebReader' })).toBeVisible();
   const book = page.getByText(initialTitle, { exact: true }).first();
@@ -100,6 +100,9 @@ test('built browser UI exercises authenticated catalog details downloads and res
 
   await details.getByRole('button', { name: 'Close details' }).click();
   await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByLabel('Access password', { exact: true })).toHaveValue(token);
+  await page.getByRole('button', { name: 'Show access password' }).click();
+  await expect(page.getByLabel('Access password', { exact: true })).toHaveAttribute('type', 'text');
   const previousProgressResponse = await request.get('/api/scan/progress', { headers: authorization });
   expect(previousProgressResponse.ok()).toBe(true);
   const previousProgress = await previousProgressResponse.json() as { jobId?: number };

@@ -66,6 +66,8 @@ RUN mkdir -p /package/web \
 
 FROM ${UBUNTU_IMAGE} AS runtime
 
+LABEL org.opencontainers.image.title="InpxWebReader"
+
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

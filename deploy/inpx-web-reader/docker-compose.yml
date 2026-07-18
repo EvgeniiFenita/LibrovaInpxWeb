@@ -53,4 +53,4 @@ services:
 
 secrets:
   inpx_web_reader_auth_token:
-    file: ${INPX_WEB_READER_AUTH_TOKEN_FILE:?Set INPX_WEB_READER_AUTH_TOKEN_FILE to a file containing the private access token}
+    file: ${INPX_WEB_READER_AUTH_TOKEN_FILE:?Set INPX_WEB_READER_AUTH_TOKEN_FILE to a file containing the private access password}

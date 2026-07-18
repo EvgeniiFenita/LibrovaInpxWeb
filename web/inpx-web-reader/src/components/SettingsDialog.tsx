@@ -1,4 +1,5 @@
-import { Info, RefreshCw, X } from 'lucide-react';
+import { Eye, EyeOff, Info, KeyRound, RefreshCw, X } from 'lucide-react';
+import { useState } from 'react';
 
 import brandBadgeUrl from '../assets/brand_badge.png';
 import type { InpxSourceOverview, CatalogStatistics, ServerStatus } from '../api/types';
@@ -12,8 +13,11 @@ interface SettingsDialogProps {
   statistics: CatalogStatistics | undefined;
   sourceState?: SourceState;
   rescanBusy: boolean;
+  accessPassword: string;
   onClose: () => void;
   onRescan: () => void;
+  onAccessPasswordChange: (value: string) => void;
+  onForgetAccessPassword: () => void;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -31,9 +35,14 @@ export function SettingsDialog({
   statistics,
   sourceState,
   rescanBusy,
+  accessPassword,
   onClose,
-  onRescan
+  onRescan,
+  onAccessPasswordChange,
+  onForgetAccessPassword
 }: SettingsDialogProps) {
+  const [draftAccessPassword, setDraftAccessPassword] = useState(accessPassword);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const modalRef = useModalA11y<HTMLElement>({ onClose });
   const totalBooks = statistics?.bookCount
     ?? status?.inpxSource?.totalBookCount
@@ -92,6 +101,60 @@ export function SettingsDialog({
               <RefreshCw aria-hidden="true" size={17} />
               Rescan
             </button>
+          </section>
+
+          <section className="settings-section access-section">
+            <h3>Server access</h3>
+            <form
+              className="settings-password-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onAccessPasswordChange(draftAccessPassword.trim());
+              }}
+            >
+              <label htmlFor="settings-access-password">Access password</label>
+              <div className="auth-token-field settings-password-field">
+                <KeyRound aria-hidden="true" size={17} />
+                <input
+                  id="settings-access-password"
+                  type={passwordVisible ? 'text' : 'password'}
+                  value={draftAccessPassword}
+                  onChange={(event) => setDraftAccessPassword(event.target.value)}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setPasswordVisible((visible) => !visible)}
+                  aria-label={passwordVisible ? 'Hide access password' : 'Show access password'}
+                >
+                  {passwordVisible
+                    ? <EyeOff aria-hidden="true" size={17} />
+                    : <Eye aria-hidden="true" size={17} />}
+                </button>
+              </div>
+              <p className="quiet-note">Stored only in this browser.</p>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={onForgetAccessPassword}
+                  disabled={!accessPassword}
+                >
+                  Forget on this device
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={
+                    !draftAccessPassword.trim()
+                    || draftAccessPassword.trim() === accessPassword.trim()
+                  }
+                >
+                  Save password
+                </button>
+              </div>
+            </form>
           </section>
 
           <section className="settings-section about-section">

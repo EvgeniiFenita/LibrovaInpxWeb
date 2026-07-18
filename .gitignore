@@ -54,6 +54,8 @@ test-results/
 .env
 **/.env
 !.env.example
+.env.deploy
+!.env.deploy.example
 .env.local
 deploy/inpx-web-reader/.env
 

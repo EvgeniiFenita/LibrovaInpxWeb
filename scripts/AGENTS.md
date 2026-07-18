@@ -1,7 +1,7 @@
 # Script rules
 
 - `RunRemoteLinux.py` and `BootstrapRemoteLinux.py` are development-host orchestrators.
-- `RunTests.py`, `RunSanitizers.py`, `RunCoverage.py`, `RunFuzzers.py`, `RunStaticAnalysis.py`, `RunLinuxTests.py`, and `PrepareDeployBundle.py` are Linux workers.
+- `RunTests.py`, `RunSanitizers.py`, `RunCoverage.py`, `RunFuzzers.py`, `RunStaticAnalysis.py`, `RunLinuxTests.py`, `RunRelease.py`, and `PrepareDeployBundle.py` are Linux workers.
 - On macOS or Windows, do not invoke `RunStaticAnalysis.py` locally just to confirm its platform rejection; run it through the Linux worker and report an unavailable remote lane as the blocker.
 - Keep all generated files, caches, test data, askpass files, and reports under repository `out/`.
 - Validate output/removal paths against their allowed roots.

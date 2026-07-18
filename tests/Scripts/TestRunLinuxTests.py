@@ -219,7 +219,11 @@ class RunLinuxTestsScriptTests(unittest.TestCase):
 
         with (
             mock.patch.object(self._module, "run", side_effect=fake_run),
-            mock.patch.object(self._module, "run_capture", return_value="linux/amd64\n"),
+            mock.patch.object(
+                self._module,
+                "run_capture",
+                side_effect=["linux/amd64\n", "InpxWebReader\n"],
+            ),
         ):
             self._module.verify_runtime_image_shape(self._repo_root, "inpx-web-reader:test")
 
@@ -236,6 +240,20 @@ class RunLinuxTestsScriptTests(unittest.TestCase):
             mock.patch.object(self._module, "run_capture", return_value="linux/arm64\n"),
             mock.patch.object(self._module, "run") as run,
             self.assertRaisesRegex(RuntimeError, "expected linux/amd64"),
+        ):
+            self._module.verify_runtime_image_shape(self._repo_root, "inpx-web-reader:test")
+
+        run.assert_not_called()
+
+    def test_runtime_image_shape_requires_cleanup_identity_label(self) -> None:
+        with (
+            mock.patch.object(
+                self._module,
+                "run_capture",
+                side_effect=["linux/amd64\n", "\n"],
+            ),
+            mock.patch.object(self._module, "run") as run,
+            self.assertRaisesRegex(RuntimeError, "org.opencontainers.image.title"),
         ):
             self._module.verify_runtime_image_shape(self._repo_root, "inpx-web-reader:test")
 

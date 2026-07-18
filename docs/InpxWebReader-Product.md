@@ -27,7 +27,7 @@ InpxWebReader makes a large read-only INPX e-book catalog searchable and downloa
 - A download is bound to the exact portable archive locator and source guards published by its scan. Source, archive, or entry mutation before publication fails the request without returning mixed-snapshot bytes.
 - Runtime remains useful without Internet access after dependencies and image are prepared.
 - Unicode and Cyrillic data are preserved across INPX, FB2, ZIP, SQLite, JSON, HTTP, logs, and filenames.
-- LAN binding requires bearer-token authentication; loopback development may run without a token.
+- LAN binding requires an access password carried as a bearer credential; loopback development may run without one.
 - The cache is disposable and reconstructible from the source.
 
 ## In scope

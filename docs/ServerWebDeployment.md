@@ -16,7 +16,7 @@ Required mounts:
 
 - read-only INPX source -> `/source:ro`
 - writable application data -> `/data`
-- bearer token file -> Docker secret
+- access-password file -> Docker secret (sent by the browser as a bearer credential)
 
 Persistent data contains `/data/cache/Database/inpx-web-reader.db`, `/data/cache/Covers`, `/data/runtime`, and logs. Deleting data forces a clean rescan; no database migration is provided.
 
@@ -63,8 +63,8 @@ Incremental rescans reuse unchanged INP segments and skip unchanged archive work
 
 ## Security
 
-- A non-loopback host requires a non-empty bearer token.
-- Keep the token in a mounted file, never in tracked `.env` or command history.
+- A non-loopback host requires a non-empty access password. The HTTP contract sends it as a bearer credential.
+- Keep the password in a mounted file, never in tracked configuration or command history.
 - Treat the server as trusted-LAN software; do not expose it directly to the public Internet.
 - Preserve the read-only source mount and Compose hardening.
 - Ensure the writable data path is accessible to the configured container identity.
@@ -99,17 +99,82 @@ The orchestrator creates a temporary source snapshot under local `out/` from Git
 
 The development-side orchestrator is supported on Windows and macOS. It selects the SSH executable beside `rsync` when available and creates a host-native temporary askpass helper under `out/`; all configure, build, test, and Docker work still executes only on the Linux worker.
 
-## Deployment bundle
+## NAS release bundle
 
-Build and retrieve a Linux Docker/NAS bundle:
+The recommended flow uses two ignored repository-root files with different
+ownership:
+
+- `.env` contains the remote Linux worker connection (`INPX_WEB_READER_BUILD_*`).
+- `.env.deploy` contains NAS release defaults (`INPX_WEB_READER_DEPLOY_*`).
+
+Create the deployment file from `.env.deploy.example`. The supported fields
+are the NAS source and application roots, host port, access password, and
+converter enable/version/asset settings. Command-line values override the file
+where both forms exist. The access password is staged through an owner-only
+temporary file under `out/`, copied to an owner-only remote input, and removed
+after the remote job; it is never placed in the SSH command or logs.
+Custom passwords contain 12–256 printable ASCII characters without spaces so
+the same value is safe in the browser's HTTP `Authorization` header. Both NAS
+roots must be absolute, must not be `/`, and must not overlap; this keeps the
+writable application tree outside the read-only INPX source.
+
+Normal release command:
 
 ```sh
-python3 scripts/RunRemoteLinux.py bundle \
-  --nas-source-root /volume/books/inpx \
-  --nas-app-root /volume/docker/inpx-web-reader
+python3 scripts/RunRemoteLinux.py release
 ```
 
-The output defaults to `out/deploy/inpx-web-reader` and contains the image archive, Compose files, token layout, and run/stop scripts. The run script selects a source-readable non-root uid/gid, and base Compose applies that identity in both converter-enabled and converter-free modes before the script verifies source, token, and data permissions. By default the bundle also downloads and wires the optional converter. Pass `--skip-converter-download` for a genuinely converter-free bundle: no converter mount or override is used, conversion stays disabled even if an older override remains on the NAS, and the run script still verifies that the loaded server image is exactly `linux/amd64`.
+The Linux `RunRelease.py` worker runs, in order:
+
+1. Python script tests and ruff.
+2. Web production build and unit/component tests.
+3. Real-server Playwright e2e unless `--skip-e2e` is explicitly selected.
+4. Native CTest plus Docker image/entrypoint/Compose smoke through
+   `RunLinuxTests.py`.
+5. `PrepareDeployBundle.py --reuse-image`, which saves the same verified image
+   instead of rebuilding it.
+
+The default image tag is
+`inpx-web-reader:<version>-<git-sha>`; a dirty Git-indexed source snapshot adds
+a stable diff hash. `manifest.json` records the version, commit, dirty flag, image ID,
+platform, archive digest, and converter state. `inpx-web-reader.tar.sha256`
+allows the NAS script to reject archive corruption before `docker load`.
+
+The output defaults to `out/deploy/inpx-web-reader` and contains the image
+archive, checksum, manifest, Compose files, private password layout, optional
+converter, and run/stop scripts. Deployment itself is manual: copy those files
+to the configured NAS application root without deleting its persistent `data/`
+directory, then run `sh RUN_ON_NAS.sh` in that directory.
+When no password is configured, the generated value is in
+`out/deploy/inpx-web-reader/secrets/inpx-web-reader-auth-token.txt`; it is not
+printed to the terminal.
+
+`RUN_ON_NAS.sh` selects a source-readable non-root uid/gid and verifies source,
+password, converter, data, image platform, restart policy, and container health.
+It captures the previously running Compose container's image before loading the
+new one. A Compose, restart-policy, or health failure retags and restarts that
+previous image when it is distinct and available. Cleanup happens only after a
+healthy deployment:
+
+- stopped containers are removed only when both the Compose project and service
+  labels identify this InpxWebReader deployment;
+- unused old images from the same repository, plus dangling images, are removed
+  only when the InpxWebReader OCI title or legacy entrypoint identifies them;
+- any image referenced by any running or stopped container is preserved;
+- no global `docker system prune` or `docker image prune` is used.
+
+This cleanup replaces the old behavior that retained every superseded image
+which still had a tag. Versioned releases therefore remain traceable without
+accumulating unused historical images on the NAS.
+
+By default the bundle downloads and wires the optional converter. Set
+`INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED=false` or pass
+`--skip-converter-download` for a genuinely converter-free bundle: no converter
+mount or override is used, conversion stays disabled even if an older override
+remains on the NAS.
+
+`RunRemoteLinux.py bundle` remains an advanced compatibility command that
+packages without the full release verification sequence.
 
 ## Verification contract
 

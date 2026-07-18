@@ -1135,6 +1135,17 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .about-section { grid-column: 1 / -1; }
+.access-section { grid-column: 1 / -1; }
+
+.settings-password-form { display: grid; gap: 8px; }
+.settings-password-form > label { color: var(--text-2); font-size: var(--text-sm); }
+.settings-password-form .modal-actions { justify-content: space-between; }
+
+.settings-password-field { grid-template-columns: auto minmax(0, 1fr) auto; }
+.settings-password-field .icon-button {
+  width: 30px; min-height: 30px;
+  border: 0; background: transparent;
+}
 
 .about-lockup { display: flex; align-items: center; gap: 12px; }
 .about-lockup img { width: 44px; height: 44px; filter: drop-shadow(0 0 10px var(--amber-glow)); }

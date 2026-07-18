@@ -31,6 +31,12 @@ from _common import (  # noqa: E402
     run_timed_stages,
     validate_parallel_jobs,
 )
+from _deploy import (  # noqa: E402
+    validate_absolute_nas_path,
+    validate_access_password,
+    validate_host_port,
+    validate_non_overlapping_nas_roots,
+)
 
 
 DEFAULT_IMAGE_TAG = "inpx-web-reader:nas-local"
@@ -38,10 +44,15 @@ DEFAULT_HOST_PORT = 8080
 DEFAULT_CONVERTER_ASSET_NAME = "fbc-linux-amd64.zip"
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
 GITHUB_RELEASES_API_ROOT = "https://api.github.com/repos/rupor-github/fb2cng/releases"
+ACCESS_PASSWORD_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
+ACCESS_PASSWORD_GROUP_COUNT = 4
+ACCESS_PASSWORD_GROUP_LENGTH = 4
 
 SERVER_COMPOSE_TEMPLATE = Path("deploy/inpx-web-reader/docker-compose.yml")
 SERVER_DOCKERFILE = Path("deploy/inpx-web-reader/Dockerfile")
 IMAGE_ARCHIVE_NAME = "inpx-web-reader.tar"
+IMAGE_ARCHIVE_CHECKSUM_NAME = f"{IMAGE_ARCHIVE_NAME}.sha256"
+BUNDLE_MANIFEST_NAME = "manifest.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,7 +98,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--token-file",
         type=Path,
-        help="Local one-line token file to copy into the bundle secret file. A random token is generated when omitted.",
+        help=(
+            "Local one-line access-password file to copy into the bundle secret file. "
+            "A short high-entropy password is generated when omitted."
+        ),
     )
     parser.add_argument(
         "--converter-version",
@@ -105,10 +119,17 @@ def parse_args() -> argparse.Namespace:
         help="Generate scripts/config without building and saving the Docker image.",
     )
     parser.add_argument(
+        "--reuse-image",
+        action="store_true",
+        help="Save an already-built and verified local image without rebuilding it.",
+    )
+    parser.add_argument(
         "--skip-converter-download",
         action="store_true",
         help="Generate a bundle with optional EPUB conversion disabled.",
     )
+    parser.add_argument("--git-commit", default="unknown", help=argparse.SUPPRESS)
+    parser.add_argument("--git-dirty", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -123,21 +144,6 @@ def ensure_linux_host() -> None:
         )
     if platform.machine().lower() not in {"x86_64", "amd64"}:
         raise RuntimeError("PrepareDeployBundle.py requires an x86_64 Linux host.")
-
-
-def validate_absolute_nas_path(path: str, label: str) -> str:
-    if not path.startswith("/"):
-        raise RuntimeError(f"{label} must be an absolute Linux/NAS path.")
-    if any(character in path for character in "\r\n"):
-        raise RuntimeError(f"{label} must not contain line breaks.")
-    if "'" in path or '"' in path or "$" in path:
-        raise RuntimeError(f"{label} must not contain quotes or '$'.")
-    return path.rstrip("/") if path != "/" else path
-
-
-def validate_host_port(port: int) -> None:
-    if port < 1 or port > 65535:
-        raise RuntimeError("--host-port must be in range 1..65535.")
 
 
 def resolve_output_dir(repo_root: Path, requested_output: Path | None) -> Path:
@@ -177,6 +183,18 @@ def write_text(path: Path, content: str, *, executable: bool = False) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
     if executable:
         path.chmod(path.stat().st_mode | 0o111)
+
+
+def write_private_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    path.touch(mode=0o600, exist_ok=False)
+    try:
+        path.write_text(content, encoding="utf-8", newline="\n")
+        path.chmod(0o600)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def prepare_output_directory(bundle_root: Path, repo_out_root: Path) -> None:
@@ -355,6 +373,13 @@ def write_converter_compose_override(bundle_root: Path) -> None:
     )
 
 
+def generate_access_password() -> str:
+    return "-".join(
+        "".join(secrets.choice(ACCESS_PASSWORD_ALPHABET) for _ in range(ACCESS_PASSWORD_GROUP_LENGTH))
+        for _ in range(ACCESS_PASSWORD_GROUP_COUNT)
+    )
+
+
 def read_one_line_token_file(token_file: Path, source_description: str) -> str:
     text = token_file.read_text(encoding="utf-8")
     if text.startswith("\ufeff"):
@@ -362,8 +387,8 @@ def read_one_line_token_file(token_file: Path, source_description: str) -> str:
 
     token = text.rstrip("\r\n")
     if "\r" in token or "\n" in token:
-        raise RuntimeError(f"{source_description} must contain exactly one token line.")
-    return token
+        raise RuntimeError(f"{source_description} must contain exactly one access-password line.")
+    return validate_access_password(token, source_description)
 
 
 def resolve_auth_token(bundle_root: Path, token_file: Path | None) -> str | None:
@@ -378,15 +403,13 @@ def resolve_auth_token(bundle_root: Path, token_file: Path | None) -> str | None
 
 
 def write_token_file(bundle_root: Path, token: str | None) -> None:
-    resolved_token = token if token is not None else secrets.token_urlsafe(32)
-    if not resolved_token:
-        raise RuntimeError("Bearer token must not be empty.")
-    if any(character in resolved_token for character in "\r\n"):
-        raise RuntimeError("Bearer token must not contain line breaks.")
+    resolved_token = validate_access_password(
+        token if token is not None else generate_access_password(),
+        "Access password",
+    )
 
     token_path = bundle_root / "secrets" / "inpx-web-reader-auth-token.txt"
-    write_text(token_path, resolved_token + "\n")
-    token_path.chmod(0o600)
+    write_private_text(token_path, resolved_token + "\n")
 
 
 def write_run_script(
@@ -526,32 +549,147 @@ image_platform_for_tag()
     docker image inspect --format '{{{{.Os}}}}/{{{{.Architecture}}}}' "$1" 2>/dev/null || true
 }}
 
-image_tags_for_id()
+image_repository_for_tag()
 {{
-    docker image inspect --format '{{{{range .RepoTags}}}}{{{{println .}}}}{{{{end}}}}' "$1" 2>/dev/null || true
+    case "$1" in
+        *:*) printf '%s\n' "${{1%:*}}" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
 }}
 
-cleanup_replaced_image()
+image_is_used_by_container()
 {{
-    stale_image_id="$1"
+    [ -n "$(docker ps -aq --filter "ancestor=$1" 2>/dev/null)" ]
+}}
+
+image_is_inpx_web_reader()
+{{
+    image_title="$(docker image inspect \
+        --format '{{{{index .Config.Labels "org.opencontainers.image.title"}}}}' "$1" 2>/dev/null || true)"
+    if [ "$image_title" = "InpxWebReader" ]; then
+        return 0
+    fi
+
+    image_entrypoint="$(docker image inspect \
+        --format '{{{{json .Config.Entrypoint}}}}' "$1" 2>/dev/null || true)"
+    [ "$image_entrypoint" = '["/usr/local/bin/inpx-web-reader-entrypoint"]' ]
+}}
+
+remove_unused_image()
+{{
+    candidate_image_id="$1"
     current_image_id="$2"
 
-    if [ -z "$stale_image_id" ] || [ "$stale_image_id" = "$current_image_id" ]; then
+    if [ -z "$candidate_image_id" ] || [ "$candidate_image_id" = "$current_image_id" ]; then
+        return
+    fi
+    if image_is_used_by_container "$candidate_image_id"; then
+        log "Keeping Docker image $candidate_image_id because a container still references it."
         return
     fi
 
-    stale_image_tags="$(image_tags_for_id "$stale_image_id")"
-    if [ -n "$stale_image_tags" ]; then
-        log "Previous Docker image $stale_image_id still has tag(s); leaving it in Docker."
+    if docker image rm -f "$candidate_image_id" >/dev/null 2>&1; then
+        log "Removed superseded InpxWebReader Docker image: $candidate_image_id."
         return
     fi
 
-    if docker image rm "$stale_image_id" >/dev/null 2>&1; then
-        log "Removed replaced dangling Docker image: $stale_image_id."
+    log "WARNING: Could not remove superseded Docker image $candidate_image_id."
+}}
+
+cleanup_old_project_containers()
+{{
+    current_container_id="$1"
+    for candidate_container_id in $(docker ps -aq \
+        --filter "label=com.docker.compose.project=inpx-web-reader" \
+        --filter "label=com.docker.compose.service=inpx-web-reader"); do
+        if [ "$candidate_container_id" = "$current_container_id" ]; then
+            continue
+        fi
+        candidate_running="$(docker inspect \
+            --format '{{{{.State.Running}}}}' "$candidate_container_id" 2>/dev/null || true)"
+        if [ "$candidate_running" = "false" ] && docker rm "$candidate_container_id" >/dev/null 2>&1; then
+            log "Removed stopped superseded InpxWebReader container: $candidate_container_id."
+        fi
+    done
+}}
+
+cleanup_superseded_images()
+{{
+    current_image_id="$1"
+    previous_image_id="$2"
+    image_repository="$(image_repository_for_tag "$INPX_WEB_READER_IMAGE")"
+
+    remove_unused_image "$previous_image_id" "$current_image_id"
+
+    candidate_image_ids="$({{
+        docker image ls --filter "reference=$image_repository:*" --format '{{{{.ID}}}}'
+        docker image ls --filter dangling=true --format '{{{{.ID}}}}'
+    }} | awk 'NF && !seen[$0]++')"
+    for candidate_image_id in $candidate_image_ids; do
+        if [ "$candidate_image_id" = "$current_image_id" ]; then
+            continue
+        fi
+        if image_is_inpx_web_reader "$candidate_image_id"; then
+            remove_unused_image "$candidate_image_id" "$current_image_id"
+        fi
+    done
+}}
+
+verify_image_archive_checksum()
+{{
+    checksum_file="$NAS_APP_ROOT/{IMAGE_ARCHIVE_CHECKSUM_NAME}"
+    [ -f "$checksum_file" ] || fail "Docker image checksum is missing: $checksum_file"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$NAS_APP_ROOT" && sha256sum -c "{IMAGE_ARCHIVE_CHECKSUM_NAME}") >/dev/null ||
+            fail "Docker image archive checksum verification failed."
+        return
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        (cd "$NAS_APP_ROOT" && shasum -a 256 -c "{IMAGE_ARCHIVE_CHECKSUM_NAME}") >/dev/null ||
+            fail "Docker image archive checksum verification failed."
         return
     fi
 
-    log "WARNING: Could not remove replaced Docker image $stale_image_id; it may still be used."
+    fail "Neither sha256sum nor shasum is available to verify the Docker image archive."
+}}
+
+wait_for_container_health()
+{{
+    candidate_container_id="$1"
+    for _attempt in $(seq 1 30); do
+        health_status="$(docker inspect \
+            --format '{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' \
+            "$candidate_container_id" 2>/dev/null || true)"
+        if [ "$health_status" = "healthy" ]; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}}
+
+rollback_previous_deployment()
+{{
+    if [ -z "$previous_image_id" ]; then
+        log "No previous InpxWebReader image is available for rollback."
+        return 1
+    fi
+    if [ "$previous_image_id" = "$loaded_image_id" ]; then
+        log "The loaded image is identical to the previous image; no distinct rollback image is available."
+        return 1
+    fi
+
+    log "Rolling back to previous Docker image: $previous_image_id."
+    docker tag "$previous_image_id" "$INPX_WEB_READER_IMAGE" || return 1
+    bundle_compose up -d --force-recreate --remove-orphans || return 1
+    rollback_container_id="$(bundle_compose ps -q inpx-web-reader || true)"
+    [ -n "$rollback_container_id" ] || return 1
+    wait_for_container_health "$rollback_container_id" || return 1
+
+    log "Rollback completed; the previous InpxWebReader image is healthy."
+    remove_unused_image "$loaded_image_id" "$previous_image_id"
+    return 0
 }}
 
 set_container_identity()
@@ -682,8 +820,11 @@ cd "$NAS_APP_ROOT"
 if [ ! -f "$NAS_APP_ROOT/{IMAGE_ARCHIVE_NAME}" ]; then
     fail "Docker image archive is missing: $NAS_APP_ROOT/{IMAGE_ARCHIVE_NAME}"
 fi
+if [ ! -f "$NAS_APP_ROOT/{BUNDLE_MANIFEST_NAME}" ]; then
+    fail "Deployment manifest is missing: $NAS_APP_ROOT/{BUNDLE_MANIFEST_NAME}"
+fi
 if [ ! -f "$NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt" ]; then
-    fail "Token file is missing."
+    fail "Access-password file is missing."
 fi
 if converter_enabled && [ ! -f "$NAS_APP_ROOT/docker-compose.converter.yml" ]; then
     fail "Converter Compose override is missing: $NAS_APP_ROOT/docker-compose.converter.yml"
@@ -693,19 +834,21 @@ if converter_enabled && [ ! -f "$NAS_APP_ROOT/converter/fbc" ]; then
 fi
 
 load_generated_env
+verify_image_archive_checksum
 
 existing_container_id="$(bundle_compose ps -q inpx-web-reader || true)"
+previous_image_id=""
 if [ -z "$existing_container_id" ]; then
     if port_is_listening || port_is_published_by_docker; then
         fail "Host port $HOST_PORT is already in use. Regenerate the bundle with --host-port <free-port>."
     fi
     log "Host port $HOST_PORT appears free."
 else
+    previous_image_id="$(docker inspect --format '{{{{.Image}}}}' "$existing_container_id" 2>/dev/null || true)"
     log "Existing inpx-web-reader container found; update will reuse host port $HOST_PORT."
 fi
 
 log "Loading Docker image."
-previous_image_id="$(image_id_for_tag "$INPX_WEB_READER_IMAGE")"
 docker load -i "$NAS_APP_ROOT/{IMAGE_ARCHIVE_NAME}"
 loaded_image_id="$(image_id_for_tag "$INPX_WEB_READER_IMAGE")"
 [ -n "$loaded_image_id" ] || fail "Docker image archive did not provide image tag $INPX_WEB_READER_IMAGE."
@@ -722,14 +865,29 @@ fi
 verify_token_readable_by_container
 
 log "Starting or updating inpx-web-reader through Docker Compose."
-bundle_compose up -d --force-recreate --remove-orphans
+if ! bundle_compose up -d --force-recreate --remove-orphans; then
+    log "Docker Compose could not start the new image."
+    if rollback_previous_deployment; then
+        fail "Deployment failed; the previous healthy image was restored."
+    fi
+    fail "Deployment failed and automatic rollback was not available."
+fi
 
-container_id="$(bundle_compose ps -q inpx-web-reader)"
-[ -n "$container_id" ] || fail "Could not resolve the running inpx-web-reader container id."
+container_id="$(bundle_compose ps -q inpx-web-reader || true)"
+if [ -z "$container_id" ]; then
+    if rollback_previous_deployment; then
+        fail "Deployment did not create a container; the previous healthy image was restored."
+    fi
+    fail "Deployment did not create a container and automatic rollback was not available."
+fi
 
-restart_policy="$(docker inspect --format '{{{{.HostConfig.RestartPolicy.Name}}}}' "$container_id")"
+restart_policy="$(docker inspect --format '{{{{.HostConfig.RestartPolicy.Name}}}}' "$container_id" 2>/dev/null || true)"
 if [ "$restart_policy" != "unless-stopped" ]; then
-    fail "Unexpected container restart policy: $restart_policy. Expected unless-stopped."
+    log "Unexpected container restart policy: ${{restart_policy:-<empty>}}. Expected unless-stopped."
+    if rollback_previous_deployment; then
+        fail "Restart-policy verification failed; the previous healthy image was restored."
+    fi
+    fail "Restart-policy verification failed and automatic rollback was not available."
 fi
 log "Container restart policy verified: unless-stopped."
 
@@ -746,25 +904,17 @@ else
 fi
 
 log "Waiting for container health."
-healthy=0
-for _attempt in $(seq 1 30); do
-    health_status="$(docker inspect \\
-        --format '{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' \\
-        "$container_id")"
-    if [ "$health_status" = "healthy" ]; then
-        healthy=1
-        break
-    fi
-    sleep 2
-done
-
-if [ "$healthy" -ne 1 ]; then
+if ! wait_for_container_health "$container_id"; then
     log "Container did not become healthy. Recent logs:"
     bundle_compose logs --tail=120 inpx-web-reader || true
-    fail "inpx-web-reader health check failed."
+    if rollback_previous_deployment; then
+        fail "Health check failed; the previous healthy image was restored."
+    fi
+    fail "Health check failed and automatic rollback was not available."
 fi
 
-cleanup_replaced_image "$previous_image_id" "$loaded_image_id"
+cleanup_old_project_containers "$container_id"
+cleanup_superseded_images "$loaded_image_id" "$previous_image_id"
 
 lan_ip="$(detect_lan_ip || true)"
 if [ -n "$lan_ip" ]; then
@@ -772,7 +922,7 @@ if [ -n "$lan_ip" ]; then
 else
     log "inpx-web-reader is running at: http://<NAS-IP>:$HOST_PORT/"
 fi
-log "Token file: $NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
+log "Access-password file: $NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
 """,
         executable=True,
     )
@@ -845,10 +995,12 @@ cd {nas_app_root}
 sh RUN_ON_NAS.sh
 ```
 
-The script loads `{IMAGE_ARCHIVE_NAME}`, starts Docker Compose, verifies the
-container restart policy is `unless-stopped`, checks Docker daemon autostart
-when `systemctl` is available, waits for the container health check, and removes
-the superseded dangling Docker image when an update replaces the local tag.
+The script verifies the image archive checksum, loads `{IMAGE_ARCHIVE_NAME}`,
+starts Docker Compose, verifies the `unless-stopped` restart policy, and waits
+for the container health check. If startup fails, it restores the previously
+running image when one is available. Only after a healthy start does it remove
+stopped containers from this Compose project and unused superseded
+InpxWebReader images. It never runs a global Docker prune.
 
 {conversion_status}
 
@@ -858,19 +1010,72 @@ Open the web UI from your LAN:
 http://<NAS-IP>:{host_port}/
 ```
 
-The access token is stored at:
+The access password is stored at:
 
 ```sh
 {nas_app_root}/secrets/inpx-web-reader-auth-token.txt
 ```
 
 When this bundle is regenerated into the same local output directory, the
-existing token is reused unless `--token-file` is supplied.
+existing password is reused unless `--token-file` or
+`INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD` is supplied.
 
-Do not commit or publish this generated bundle. It contains a private token and
-a local Docker image archive.
+The bundle also contains `manifest.json` and `{IMAGE_ARCHIVE_CHECKSUM_NAME}` so
+the NAS can reject a damaged or partially copied image archive before loading
+it.
+
+Do not commit or publish this generated bundle. It contains a private password
+and a local Docker image archive.
 """,
     )
+
+
+def inspect_image_property(
+    repo_root: Path,
+    image_tag: str,
+    format_value: str,
+    env: dict[str, str],
+) -> str:
+    return subprocess.run(
+        resolve_command(
+            ["docker", "image", "inspect", "--format", format_value, image_tag]
+        ),
+        cwd=repo_root,
+        env=out_scoped_environment(repo_root, env),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    ).stdout.strip()
+
+
+def verify_image_platform(
+    repo_root: Path,
+    image_tag: str,
+    env: dict[str, str],
+) -> None:
+    inspected_platform = inspect_image_property(
+        repo_root,
+        image_tag,
+        "{{.Os}}/{{.Architecture}}",
+        env,
+    )
+    if inspected_platform != "linux/amd64":
+        raise RuntimeError(
+            f"Saved runtime image platform is {inspected_platform or '<empty>'}, expected linux/amd64."
+        )
+
+
+def save_existing_image(
+    repo_root: Path,
+    bundle_root: Path,
+    image_tag: str,
+) -> None:
+    ensure_linux_host()
+    env = build_out_tool_environment(repo_root, "nas-deploy")
+    ensure_docker_engine(repo_root, env)
+    verify_image_platform(repo_root, image_tag, env)
+    run(["docker", "save", "-o", str(bundle_root / IMAGE_ARCHIVE_NAME), image_tag], repo_root, env=env)
 
 
 def build_and_save_image(
@@ -899,22 +1104,61 @@ def build_and_save_image(
         repo_root,
         env=env,
     )
-    inspected_platform = subprocess.run(
-        resolve_command(
-            ["docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image_tag]
-        ),
-        cwd=repo_root,
-        env=out_scoped_environment(repo_root, env),
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    ).stdout.strip()
-    if inspected_platform != "linux/amd64":
-        raise RuntimeError(
-            f"Saved runtime image platform is {inspected_platform or '<empty>'}, expected linux/amd64."
-        )
+    verify_image_platform(repo_root, image_tag, env)
     run(["docker", "save", "-o", str(bundle_root / IMAGE_ARCHIVE_NAME), image_tag], repo_root, env=env)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_bundle_manifest(
+    repo_root: Path,
+    bundle_root: Path,
+    image_tag: str,
+    git_commit: str,
+    git_dirty: bool,
+    converter_enabled: bool,
+) -> None:
+    image_archive = bundle_root / IMAGE_ARCHIVE_NAME
+    if not image_archive.is_file():
+        return
+
+    env = build_out_tool_environment(repo_root, "nas-deploy")
+    image_id = inspect_image_property(repo_root, image_tag, "{{.Id}}", env)
+    image_platform = inspect_image_property(
+        repo_root,
+        image_tag,
+        "{{.Os}}/{{.Architecture}}",
+        env,
+    )
+    archive_sha256 = sha256_file(image_archive)
+    product_version = (repo_root / "VERSION.txt").read_text(encoding="utf-8").strip()
+    manifest = {
+        "schemaVersion": 1,
+        "product": "InpxWebReader",
+        "productVersion": product_version,
+        "gitCommit": git_commit,
+        "gitDirty": git_dirty,
+        "imageTag": image_tag,
+        "imageId": image_id,
+        "imagePlatform": image_platform,
+        "imageArchive": IMAGE_ARCHIVE_NAME,
+        "imageArchiveSha256": archive_sha256,
+        "converterEnabled": converter_enabled,
+    }
+    write_text(
+        bundle_root / BUNDLE_MANIFEST_NAME,
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+    )
+    write_text(
+        bundle_root / IMAGE_ARCHIVE_CHECKSUM_NAME,
+        f"{archive_sha256}  {IMAGE_ARCHIVE_NAME}\n",
+    )
 
 
 def copy_compose_template(repo_root: Path, bundle_root: Path) -> None:
@@ -924,11 +1168,14 @@ def copy_compose_template(repo_root: Path, bundle_root: Path) -> None:
 def prepare_bundle(args: argparse.Namespace) -> Path:
     ensure_linux_host()
     docker_platform_arguments(args.docker_platform)
+    if args.skip_image_build and args.reuse_image:
+        raise RuntimeError("--skip-image-build and --reuse-image cannot be combined.")
     repo_root = repository_root()
     repo_out_root = out_root(repo_root)
     output_dir = resolve_output_dir(repo_root, args.output)
     nas_source_root = validate_absolute_nas_path(args.nas_source_root, "--nas-source-root")
     nas_app_root = validate_absolute_nas_path(args.nas_app_root, "--nas-app-root")
+    validate_non_overlapping_nas_roots(nas_source_root, nas_app_root)
     validate_host_port(args.host_port)
     build_jobs = args.build_jobs if args.build_jobs is not None else default_parallel_jobs()
     validate_parallel_jobs(build_jobs)
@@ -976,23 +1223,40 @@ def prepare_bundle(args: argparse.Namespace) -> Path:
             )
         )
     if not args.skip_image_build:
-        stages.append(
-            TimedStage(
-                f"Build and save Docker image ({args.image_tag})",
-                lambda: build_and_save_image(
-                    repo_root,
-                    output_dir,
-                    args.image_tag,
-                    args.docker_platform,
-                    build_jobs,
-                ),
+        if args.reuse_image:
+            stages.append(
+                TimedStage(
+                    f"Save verified Docker image ({args.image_tag})",
+                    lambda: save_existing_image(repo_root, output_dir, args.image_tag),
+                )
             )
-        )
+        else:
+            stages.append(
+                TimedStage(
+                    f"Build and save Docker image ({args.image_tag})",
+                    lambda: build_and_save_image(
+                        repo_root,
+                        output_dir,
+                        args.image_tag,
+                        args.docker_platform,
+                        build_jobs,
+                    ),
+                )
+            )
 
     if stages:
         run_timed_stages(stages, success_message="NAS deployment bundle prepared successfully.")
     else:
         print("==> NAS deployment bundle files prepared successfully.", flush=True)
+
+    write_bundle_manifest(
+        repo_root,
+        output_dir,
+        args.image_tag,
+        args.git_commit,
+        args.git_dirty,
+        converter_enabled,
+    )
 
     print(f"==> Bundle: {output_dir}", flush=True)
     return output_dir

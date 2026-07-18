@@ -54,6 +54,191 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
         self._platform_patch.stop()
         self._temp_dir.cleanup()
 
+    def _prepare_runnable_generated_script(self) -> tuple[Path, Path]:
+        source_root = self._repo_root / "nas-source"
+        source_root.mkdir()
+        bundle_root = self._repo_root / "out" / "deploy" / "inpx-web-reader"
+        with (
+            mock.patch.object(self._module, "repository_root", return_value=self._repo_root),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "PrepareDeployBundle.py",
+                    "--nas-source-root",
+                    str(source_root),
+                    "--nas-app-root",
+                    str(bundle_root),
+                    "--skip-image-build",
+                    "--skip-converter-download",
+                ],
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(self._module.main(), 0)
+
+        archive_path = bundle_root / self._module.IMAGE_ARCHIVE_NAME
+        archive_path.write_bytes(b"fake image archive")
+        archive_sha256 = self._module.sha256_file(archive_path)
+        (bundle_root / self._module.IMAGE_ARCHIVE_CHECKSUM_NAME).write_text(
+            f"{archive_sha256}  {self._module.IMAGE_ARCHIVE_NAME}\n",
+            encoding="utf-8",
+        )
+        (bundle_root / self._module.BUNDLE_MANIFEST_NAME).write_text("{}\n", encoding="utf-8")
+
+        fake_bin = self._repo_root / "out" / "fake-nas-bin"
+        fake_bin.mkdir(parents=True)
+        fake_commands = {
+            "docker": """#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+
+if [ "${1:-}" = "compose" ]; then
+    shift
+    if [ "${1:-}" = "version" ]; then
+        exit 0
+    fi
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --env-file|-f) shift 2 ;;
+            *) break ;;
+        esac
+    done
+    compose_action="${1:-}"
+    case "$compose_action" in
+        ps)
+            if [ -f "$FAKE_DOCKER_STATE" ]; then
+                command cat "$FAKE_DOCKER_STATE"
+            else
+                printf 'existing-old\n'
+            fi
+            ;;
+        up)
+            if [ "$FAKE_DEPLOY_MODE" = "rollback" ] && [ -f "$FAKE_DOCKER_STATE" ]; then
+                printf 'rollback-container\n' > "$FAKE_DOCKER_STATE"
+            else
+                printf 'current-new\n' > "$FAKE_DOCKER_STATE"
+            fi
+            ;;
+        logs) ;;
+        *) exit 2 ;;
+    esac
+    exit 0
+fi
+
+case "${1:-}" in
+    load|run|tag|rm)
+        exit 0
+        ;;
+    inspect)
+        format="${3:-}"
+        target="${4:-}"
+        case "$format" in
+            *'.Image'*) printf 'sha256:old\n' ;;
+            *'RestartPolicy.Name'*) printf 'unless-stopped\n' ;;
+            *'State.Health.Status'*)
+                if [ "$FAKE_DEPLOY_MODE" = "rollback" ] && [ "$target" = "current-new" ]; then
+                    printf 'starting\n'
+                else
+                    printf 'healthy\n'
+                fi
+                ;;
+            *'.State.Running'*) printf 'false\n' ;;
+            *) exit 2 ;;
+        esac
+        exit 0
+        ;;
+    image)
+        image_action="${2:-}"
+        case "$image_action" in
+            inspect)
+                format="${4:-}"
+                target="${5:-}"
+                case "$format" in
+                    *'.Id'*) printf 'sha256:new\n' ;;
+                    *'.Os'*) printf 'linux/amd64\n' ;;
+                    *'org.opencontainers.image.title'*)
+                        case "$target" in
+                            sha256:old|sha256:ancient|sha256:protected) printf 'InpxWebReader\n' ;;
+                            *) printf 'OtherImage\n' ;;
+                        esac
+                        ;;
+                    *'.Config.Entrypoint'*) printf 'null\n' ;;
+                    *) exit 2 ;;
+                esac
+                ;;
+            ls)
+                case "$*" in
+                    *'dangling=true'*) printf 'sha256:foreign\n' ;;
+                    *'reference='*)
+                        printf 'sha256:new\nsha256:old\nsha256:ancient\nsha256:protected\n'
+                        ;;
+                esac
+                ;;
+            rm) ;;
+            *) exit 2 ;;
+        esac
+        exit 0
+        ;;
+    ps)
+        case "$*" in
+            *'ancestor=sha256:protected'*) printf 'retained-container\n' ;;
+            *'ancestor='*) ;;
+            *'com.docker.compose.project=inpx-web-reader'*)
+                printf 'current-new\nold-stopped\n'
+                ;;
+        esac
+        exit 0
+        ;;
+esac
+
+exit 2
+""",
+            "stat": """#!/bin/sh
+set -eu
+case "${2:-}" in
+    %u|%g) printf '1000\n' ;;
+    *) exit 2 ;;
+esac
+""",
+            "ip": """#!/bin/sh
+printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
+""",
+            "systemctl": "#!/bin/sh\nexit 0\n",
+            "chown": "#!/bin/sh\nexit 0\n",
+            "chmod": "#!/bin/sh\nexit 0\n",
+            "sleep": "#!/bin/sh\nexit 0\n",
+        }
+        for name, content in fake_commands.items():
+            command_path = fake_bin / name
+            command_path.write_text(content, encoding="utf-8", newline="\n")
+            command_path.chmod(0o755)
+        return bundle_root, fake_bin
+
+    def _run_generated_nas_script(self, mode: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        bundle_root, fake_bin = self._prepare_runnable_generated_script()
+        docker_log = self._repo_root / "out" / "fake-docker.log"
+        docker_state = self._repo_root / "out" / "fake-docker.state"
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "PATH": os.pathsep.join([str(fake_bin), "/usr/bin", "/bin"]),
+                "FAKE_DEPLOY_MODE": mode,
+                "FAKE_DOCKER_LOG": str(docker_log),
+                "FAKE_DOCKER_STATE": str(docker_state),
+            }
+        )
+        result = subprocess.run(
+            ["sh", str(bundle_root / "RUN_ON_NAS.sh")],
+            cwd=bundle_root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return result, docker_log.read_text(encoding="utf-8").splitlines()
+
     def test_help_runs_without_side_effects(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="inpx-web-reader-prepare-nas-help-",
@@ -123,8 +308,10 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
         )
 
         token = (bundle_root / "secrets" / "inpx-web-reader-auth-token.txt").read_text(encoding="utf-8").strip()
-        self.assertGreater(len(token), 30)
-        self.assertNotIn("\n", token)
+        self.assertRegex(
+            token,
+            r"^[23456789abcdefghjkmnpqrstuvwxyz]{4}(?:-[23456789abcdefghjkmnpqrstuvwxyz]{4}){3}$",
+        )
 
         runner_text = (bundle_root / "RUN_ON_NAS.sh").read_text(encoding="utf-8")
         subprocess.run(["sh", "-n", str(bundle_root / "RUN_ON_NAS.sh")], check=True)
@@ -134,11 +321,17 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
         self.assertIn("awk -F=", runner_text)
         self.assertIn("INPX_WEB_READER_IMAGE in .env contains unsupported characters", runner_text)
         self.assertIn("docker load -i", runner_text)
-        self.assertIn('previous_image_id="$(image_id_for_tag "$INPX_WEB_READER_IMAGE")"', runner_text)
+        self.assertIn("previous_image_id=\"$(docker inspect --format '{{.Image}}'", runner_text)
         self.assertIn('loaded_image_id="$(image_id_for_tag "$INPX_WEB_READER_IMAGE")"', runner_text)
         self.assertIn("Docker image archive did not provide image tag $INPX_WEB_READER_IMAGE", runner_text)
-        self.assertIn('cleanup_replaced_image "$previous_image_id" "$loaded_image_id"', runner_text)
-        self.assertIn('docker image rm "$stale_image_id"', runner_text)
+        self.assertIn('cleanup_old_project_containers "$container_id"', runner_text)
+        self.assertIn('cleanup_superseded_images "$loaded_image_id" "$previous_image_id"', runner_text)
+        self.assertIn('docker image rm -f "$candidate_image_id"', runner_text)
+        self.assertIn("com.docker.compose.project=inpx-web-reader", runner_text)
+        self.assertIn("org.opencontainers.image.title", runner_text)
+        self.assertIn("verify_image_archive_checksum", runner_text)
+        self.assertIn("rollback_previous_deployment", runner_text)
+        self.assertIn("no distinct rollback image is available", runner_text)
         self.assertIn("CONTAINER_UID=10001", runner_text)
         self.assertIn("choose_container_identity", runner_text)
         self.assertIn("stat -c '%u' \"$NAS_SOURCE_ROOT\"", runner_text)
@@ -187,9 +380,34 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
         readme_text = (bundle_root / "README_NAS_DEPLOY.md").read_text(encoding="utf-8")
         self.assertIn("sh RUN_ON_NAS.sh", readme_text)
         self.assertIn("http://<NAS-IP>:8091/", readme_text)
-        self.assertIn("existing token is reused", readme_text)
+        self.assertIn("existing password is reused", readme_text)
         self.assertIn("EPUB conversion is disabled", readme_text)
-        self.assertIn("Do not commit or publish this generated bundle", readme_text)
+        self.assertIn("private password", readme_text)
+        self.assertIn("It never runs a global Docker prune", readme_text)
+
+    @unittest.skipUnless(os.name == "posix", "The generated NAS script requires POSIX sh.")
+    def test_generated_nas_script_cleans_only_unused_scoped_artifacts_after_health(self) -> None:
+        result, docker_calls = self._run_generated_nas_script("success")
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("rm old-stopped", docker_calls)
+        self.assertIn("image rm -f sha256:old", docker_calls)
+        self.assertIn("image rm -f sha256:ancient", docker_calls)
+        self.assertNotIn("image rm -f sha256:protected", docker_calls)
+        self.assertNotIn("image rm -f sha256:foreign", docker_calls)
+        self.assertIn("because a container still references it", result.stdout)
+
+    @unittest.skipUnless(os.name == "posix", "The generated NAS script requires POSIX sh.")
+    def test_generated_nas_script_rolls_back_before_cleanup_when_health_fails(self) -> None:
+        result, docker_calls = self._run_generated_nas_script("rollback")
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("tag sha256:old inpx-web-reader:nas-local", docker_calls)
+        self.assertIn("image rm -f sha256:new", docker_calls)
+        self.assertNotIn("rm old-stopped", docker_calls)
+        self.assertNotIn("image rm -f sha256:ancient", docker_calls)
+        self.assertIn("Rollback completed", result.stdout)
+        self.assertIn("the previous healthy image was restored", result.stdout)
 
     def test_prepare_bundle_enables_converter_when_download_is_requested(self) -> None:
         with (
@@ -303,6 +521,7 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
             / "inpx-web-reader-auth-token.txt"
         )
         self.assertEqual(stat.S_IMODE(token_path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(token_path.parent.stat().st_mode), 0o700)
 
     def test_prepare_bundle_reuses_existing_generated_token_by_default(self) -> None:
         existing_token_path = (
@@ -363,7 +582,42 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
             exit_code = self._module.main()
 
         self.assertEqual(exit_code, 1)
-        self.assertIn("--token-file must contain exactly one token line", stderr.getvalue())
+        self.assertIn("--token-file must contain exactly one access-password line", stderr.getvalue())
+
+    def test_prepare_bundle_rejects_short_access_password(self) -> None:
+        token_file = self._repo_root / "local-token.txt"
+        token_file.write_text("too-short\n", encoding="utf-8")
+        with (
+            mock.patch.object(self._module, "repository_root", return_value=self._repo_root),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "PrepareDeployBundle.py",
+                    "--nas-source-root",
+                    "/volume1/books",
+                    "--nas-app-root",
+                    "/volume1/docker/inpx-web-reader",
+                    "--token-file",
+                    str(token_file),
+                    "--skip-image-build",
+                    "--skip-converter-download",
+                ],
+            ),
+            contextlib.redirect_stderr(io.StringIO()) as stderr,
+        ):
+            exit_code = self._module.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("at least 12 characters", stderr.getvalue())
+
+    def test_prepare_bundle_rejects_passwords_unsafe_for_http_headers(self) -> None:
+        for password in ("пароль-доступа", "access password"):
+            with self.subTest(password=password):
+                token_file = self._repo_root / "local-token.txt"
+                token_file.write_text(password + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "printable ASCII characters without spaces"):
+                    self._module.read_one_line_token_file(token_file, "--token-file")
 
     def test_prepare_bundle_rejects_non_absolute_nas_paths(self) -> None:
         with (
@@ -387,6 +641,24 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("must be an absolute Linux/NAS path", stderr.getvalue())
+
+    def test_prepare_bundle_rejects_root_parent_and_overlapping_nas_paths(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "must not be the filesystem root"):
+            self._module.validate_absolute_nas_path("/", "--nas-app-root")
+        with self.assertRaisesRegex(RuntimeError, "parent-directory components"):
+            self._module.validate_absolute_nas_path("/volume/books/../docker", "--nas-app-root")
+        with self.assertRaisesRegex(RuntimeError, "backticks, or backslashes"):
+            self._module.validate_absolute_nas_path("/volume/books/`unsafe`", "--nas-app-root")
+        with self.assertRaisesRegex(RuntimeError, "must not overlap"):
+            self._module.validate_non_overlapping_nas_roots(
+                "/volume/books/inpx",
+                "/volume/books/inpx/deployment",
+            )
+        with self.assertRaisesRegex(RuntimeError, "must not overlap"):
+            self._module.validate_non_overlapping_nas_roots(
+                "/volume/docker/inpx-web-reader/source",
+                "/volume/docker/inpx-web-reader",
+            )
 
     def test_release_asset_helpers_select_linux_amd64_converter(self) -> None:
         release = {
@@ -548,6 +820,71 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
                 "linux/amd64",
                 2,
             )
+
+    def test_save_existing_image_verifies_platform_and_writes_archive(self) -> None:
+        bundle_root = self._repo_root / "out" / "deploy" / "inpx-web-reader"
+        commands: list[list[str]] = []
+        with (
+            mock.patch.object(self._module, "ensure_docker_engine"),
+            mock.patch.object(self._module, "verify_image_platform") as verify_platform,
+            mock.patch.object(
+                self._module,
+                "run",
+                side_effect=lambda command, *_args, **_kwargs: commands.append(command),
+            ),
+        ):
+            self._module.save_existing_image(
+                self._repo_root,
+                bundle_root,
+                "inpx-web-reader:verified",
+            )
+
+        verify_platform.assert_called_once()
+        self.assertEqual(
+            commands,
+            [[
+                "docker",
+                "save",
+                "-o",
+                str(bundle_root / self._module.IMAGE_ARCHIVE_NAME),
+                "inpx-web-reader:verified",
+            ]],
+        )
+
+    def test_bundle_manifest_records_versioned_image_and_archive_checksum(self) -> None:
+        bundle_root = self._repo_root / "out" / "deploy" / "inpx-web-reader"
+        bundle_root.mkdir(parents=True)
+        (self._repo_root / "VERSION.txt").write_text("1.2.0\n", encoding="utf-8")
+        archive = bundle_root / self._module.IMAGE_ARCHIVE_NAME
+        archive.write_bytes(b"verified-image-archive")
+
+        with mock.patch.object(
+            self._module,
+            "inspect_image_property",
+            side_effect=["sha256:image-id", "linux/amd64"],
+        ):
+            self._module.write_bundle_manifest(
+                self._repo_root,
+                bundle_root,
+                "inpx-web-reader:1.2.0-abcdef123456",
+                "abcdef1234567890",
+                True,
+                False,
+            )
+
+        manifest = self._module.json.loads(
+            (bundle_root / self._module.BUNDLE_MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+        expected_sha256 = self._module.hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertEqual(manifest["productVersion"], "1.2.0")
+        self.assertEqual(manifest["gitCommit"], "abcdef1234567890")
+        self.assertTrue(manifest["gitDirty"])
+        self.assertEqual(manifest["imagePlatform"], "linux/amd64")
+        self.assertEqual(manifest["imageArchiveSha256"], expected_sha256)
+        self.assertEqual(
+            (bundle_root / self._module.IMAGE_ARCHIVE_CHECKSUM_NAME).read_text(encoding="utf-8"),
+            f"{expected_sha256}  {self._module.IMAGE_ARCHIVE_NAME}\n",
+        )
 
     def test_image_build_points_non_linux_users_to_remote_runner(self) -> None:
         with mock.patch.object(self._module.sys, "platform", "non-linux"):

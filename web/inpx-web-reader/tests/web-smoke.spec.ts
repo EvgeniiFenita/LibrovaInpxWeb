@@ -33,6 +33,7 @@ async function routeApi(page: Page) {
   let searchRequests = 0;
   let downloadRequests = 0;
   let coverRequests = 0;
+  let expectedAccessPassword = 'smoke-token';
 
   await page.route('**/api/status', async (route) => {
     await route.fulfill({
@@ -259,7 +260,9 @@ async function routeApi(page: Page) {
 
   await page.route('**/api/covers/**', async (route) => {
     coverRequests += 1;
-    expect(route.request().headers().authorization).toBe('Bearer smoke-token');
+    expect(route.request().headers().authorization).toBe(
+      expectedAccessPassword ? `Bearer ${expectedAccessPassword}` : undefined
+    );
     await route.fulfill({
       status: 200,
       contentType: 'image/png',
@@ -269,7 +272,10 @@ async function routeApi(page: Page) {
 
   return {
     getDownloadRequests: () => downloadRequests,
-    getCoverRequests: () => coverRequests
+    getCoverRequests: () => coverRequests,
+    setExpectedAccessPassword: (value: string) => {
+      expectedAccessPassword = value;
+    }
   };
 }
 
@@ -439,6 +445,35 @@ test('iPad-sized browser keeps the desktop catalog surface', async ({ page }) =>
   await expect(page.locator('.book-card').first()).toBeVisible();
   await expect(page.locator('.mobile-book-row')).toHaveCount(0);
   await expect(page.getByText('No filters active')).toBeVisible();
+});
+
+test('settings replace and forget the browser access password explicitly', async ({ page }) => {
+  const api = await routeApi(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('inpx-web-reader.access-token', 'smoke-token');
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'InpxWebReader' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const passwordInput = page.getByLabel('Access password', { exact: true });
+  await expect(passwordInput).toHaveAttribute('type', 'password');
+  await passwordInput.fill('next-password');
+  api.setExpectedAccessPassword('next-password');
+  await page.getByRole('button', { name: 'Save password' }).click();
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('inpx-web-reader.access-token')
+  ))).toBe('next-password');
+
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByLabel('Access password', { exact: true })).toHaveValue('next-password');
+  await page.getByRole('button', { name: 'Show access password' }).click();
+  await expect(page.getByLabel('Access password', { exact: true })).toHaveAttribute('type', 'text');
+  api.setExpectedAccessPassword('');
+  await page.getByRole('button', { name: 'Forget on this device' }).click();
+  await expect.poll(() => page.evaluate(() => (
+    localStorage.getItem('inpx-web-reader.access-token')
+  ))).toBeNull();
 });
 
 test('catalog pagination follows the opaque cursor and keeps the first-page summary', async ({ page }) => {

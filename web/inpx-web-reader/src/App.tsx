@@ -185,7 +185,7 @@ function AuthGate({
         <div>
           <span className="eyebrow">InpxWebReader Server</span>
           <h1 id="auth-title">Server access</h1>
-          <p>Enter the token configured for this server.</p>
+          <p>Enter the access password configured for this server.</p>
         </div>
         <form
           className="auth-form"
@@ -200,8 +200,8 @@ function AuthGate({
               type="password"
               value={draftToken}
               onChange={(event) => setDraftToken(event.target.value)}
-              placeholder="Token"
-              aria-label="Server access token"
+              placeholder="Access password"
+              aria-label="Server access password"
               autoComplete="current-password"
             />
           </label>
@@ -701,8 +701,19 @@ export function App() {
           sourceState={sourceState}
           statistics={stats}
           rescanBusy={startScanMutation.isPending}
+          accessPassword={token}
           onClose={() => setSettingsOpen(false)}
           onRescan={startRescan}
+          onAccessPasswordChange={(value) => {
+            setAuthBlockedToken(null);
+            setToken(value);
+            setSettingsOpen(false);
+          }}
+          onForgetAccessPassword={() => {
+            setAuthBlockedToken(null);
+            setToken('');
+            setSettingsOpen(false);
+          }}
         />
       )}
 

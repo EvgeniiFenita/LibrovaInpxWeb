@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 REMOTE_HELPER_SCRIPT = REPO_ROOT / "scripts" / "_remote_linux.py"
 REMOTE_RUNNER_SCRIPT = REPO_ROOT / "scripts" / "RunRemoteLinux.py"
 REMOTE_BOOTSTRAP_SCRIPT = REPO_ROOT / "scripts" / "BootstrapRemoteLinux.py"
+DEPLOY_ENV_TEMPLATE = REPO_ROOT / ".env.deploy.example"
 TEST_OUTPUT_ROOT = REPO_ROOT / "out" / "tests" / "RemoteLinux"
 
 
@@ -466,10 +467,106 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="inpx-web-reader-remote-help-", dir=TEST_OUTPUT_ROOT) as temp_dir:
             result = run_entry_script_help(REMOTE_RUNNER_SCRIPT, Path(temp_dir))
 
-        self.assertIn("Linux Docker deployment bundle", result.stdout)
+        self.assertIn("deployment bundle", result.stdout)
         self.assertIn("test", result.stdout)
         self.assertIn("e2e", result.stdout)
+        self.assertIn("release", result.stdout)
         self.assertIn("bundle", result.stdout)
+
+    def test_deploy_env_loads_nas_paths_password_and_converter_defaults(self) -> None:
+        env_path = self._repo_root / ".env.deploy"
+        env_path.write_text(
+            "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT=/volume/books/inpx\n"
+            "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT=/volume/docker/inpx-web-reader\n"
+            "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD=abcd-efgh-jkmn-pqrs\n"
+            "INPX_WEB_READER_DEPLOY_HOST_PORT=8090\n"
+            "INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED=false\n",
+            encoding="utf-8",
+        )
+
+        config = self._module.load_deploy_config(Path(".env.deploy"), self._repo_root)
+
+        self.assertEqual(config.nas_source_root, "/volume/books/inpx")
+        self.assertEqual(config.nas_app_root, "/volume/docker/inpx-web-reader")
+        self.assertEqual(config.access_password, "abcd-efgh-jkmn-pqrs")
+        self.assertEqual(config.host_port, 8090)
+        self.assertFalse(config.converter_enabled)
+
+    def test_deploy_args_reject_unsafe_paths_and_password_before_remote_work(self) -> None:
+        env_path = self._repo_root / ".env.deploy"
+        env_path.write_text(
+            "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT=/volume/books/inpx\n"
+            "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT=/volume/books/inpx/deployment\n"
+            "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD=пароль-доступа\n",
+            encoding="utf-8",
+        )
+        args = argparse_namespace(
+            deploy_env_file=Path(".env.deploy"),
+            nas_source_root=None,
+            nas_app_root=None,
+            host_port=None,
+            converter_version=None,
+            converter_asset_name=None,
+            skip_converter_download=None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "must not overlap"):
+            self._module.resolve_deploy_args(args, self._repo_root)
+
+        env_path.write_text(
+            "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT=/volume/books/inpx\n"
+            "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT=/volume/docker/inpx-web-reader\n"
+            "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD=пароль-доступа\n",
+            encoding="utf-8",
+        )
+        args.nas_source_root = None
+        args.nas_app_root = None
+        with self.assertRaisesRegex(RuntimeError, "printable ASCII characters without spaces"):
+            self._module.resolve_deploy_args(args, self._repo_root)
+
+        args.nas_source_root = "/volume/books/inpx"
+        args.nas_app_root = "/volume/docker/inpx-web-reader"
+        args.host_port = 70000
+        with self.assertRaisesRegex(RuntimeError, "range 1..65535"):
+            self._module.resolve_deploy_args(args, self._repo_root)
+
+    def test_tracked_deploy_env_template_contains_only_supported_fields(self) -> None:
+        keys = {
+            line.split("=", 1)[0]
+            for line in DEPLOY_ENV_TEMPLATE.read_text(encoding="utf-8").splitlines()
+            if line.startswith("INPX_WEB_READER_DEPLOY_")
+        }
+
+        self.assertEqual(
+            keys,
+            {
+                "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT",
+                "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT",
+                "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD",
+                "INPX_WEB_READER_DEPLOY_HOST_PORT",
+                "INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED",
+                "INPX_WEB_READER_DEPLOY_CONVERTER_VERSION",
+                "INPX_WEB_READER_DEPLOY_CONVERTER_ASSET_NAME",
+            },
+        )
+
+    def test_release_identity_uses_version_commit_and_dirty_diff_hash(self) -> None:
+        (self._repo_root / "VERSION.txt").write_text("1.2.0\n", encoding="utf-8")
+        dirty_diff = b"diff --git a/file b/file\n"
+        with (
+            mock.patch.object(self._module, "git_output", return_value="abcdef1234567890"),
+            mock.patch.object(
+                self._module.subprocess,
+                "run",
+                return_value=mock.Mock(stdout=dirty_diff),
+            ),
+        ):
+            image_tag, commit, dirty = self._module.release_identity(self._repo_root)
+
+        expected_hash = self._module.hashlib.sha256(dirty_diff).hexdigest()[:8]
+        self.assertEqual(image_tag, f"inpx-web-reader:1.2.0-abcdef123456-dirty-{expected_hash}")
+        self.assertEqual(commit, "abcdef1234567890")
+        self.assertTrue(dirty)
 
     def test_e2e_command_runs_real_server_browser_lane_on_remote_linux(self) -> None:
         args = argparse_namespace(
@@ -644,6 +741,8 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
             converter_asset_name="fbc-linux-amd64.zip",
             skip_image_build=False,
             skip_converter_download=True,
+            git_commit="abcdef1234567890",
+            git_dirty=True,
         )
 
         command = self._module.build_bundle_command(args, PurePosixPath("/srv/inpx-web-reader/inputs/token.txt"))
@@ -653,6 +752,33 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
         self.assertIn("--build-jobs", command)
         self.assertIn("2", command)
         self.assertIn("--skip-converter-download", command)
+        self.assertIn("--git-dirty", command)
+
+    def test_release_command_uses_single_verified_image_tag(self) -> None:
+        args = argparse_namespace(
+            nas_source_root="/volume/books",
+            nas_app_root="/volume/inpx-web-reader",
+            host_port=8090,
+            image_tag="inpx-web-reader:1.2.0-abcdef123456",
+            docker_platform="linux/amd64",
+            parallel_jobs=8,
+            build_jobs=7,
+            test_jobs=6,
+            smoke_book_count=2048,
+            converter_version="latest",
+            converter_asset_name="fbc-linux-amd64.zip",
+            skip_converter_download=False,
+            skip_e2e=False,
+            git_commit="abcdef1234567890",
+            git_dirty=False,
+        )
+
+        command = self._module.build_release_command(args, None)
+
+        self.assertEqual(command[:2], ["python3", "scripts/RunRelease.py"])
+        self.assertIn("inpx-web-reader:1.2.0-abcdef123456", command)
+        self.assertIn("--smoke-book-count", command)
+        self.assertNotIn("--skip-e2e", command)
 
     def test_bundle_output_defaults_under_repository_out(self) -> None:
         output = self._module.resolve_bundle_output(self._repo_root, None)
@@ -717,6 +843,39 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
         input_root = self._repo_root / "out" / "remote-linux" / "inputs"
         self.assertEqual(list(input_root.glob("*")), [])
         transport.RunSsh.assert_not_called()
+
+    def test_access_password_is_staged_without_putting_it_in_the_remote_command(self) -> None:
+        transport = mock.Mock()
+        transport.repo_root = self._repo_root
+        captured_password = ""
+
+        def capture_token_file(_transport: object, _config: object, token_file: Path) -> PurePosixPath:
+            nonlocal captured_password
+            captured_password = token_file.read_text(encoding="utf-8")
+            if os.name != "nt":
+                self.assertEqual(token_file.stat().st_mode & 0o777, 0o600)
+            return PurePosixPath("/srv/inpx-web-reader/inputs/token.txt")
+
+        with mock.patch.object(self._module, "sync_token_file", side_effect=capture_token_file):
+            remote_path = self._module.sync_access_password(
+                transport,
+                self._config,
+                "abcd-efgh-jkmn-pqrs",
+            )
+
+        self.assertEqual(captured_password, "abcd-efgh-jkmn-pqrs\n")
+        self.assertEqual(remote_path, PurePosixPath("/srv/inpx-web-reader/inputs/token.txt"))
+        self.assertEqual(list((self._repo_root / "out" / "remote-linux" / "inputs").glob("*")), [])
+
+    def test_access_password_rejects_short_values(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "at least 12 characters"):
+            self._module.validate_access_password("too-short")
+
+    def test_access_password_rejects_values_unsafe_for_http_headers(self) -> None:
+        for password in ("пароль-доступа", "access password"):
+            with self.subTest(password=password):
+                with self.assertRaisesRegex(RuntimeError, "printable ASCII characters without spaces"):
+                    self._module.validate_access_password(password)
 
 
 class RemoteLinuxBootstrapTests(unittest.TestCase):

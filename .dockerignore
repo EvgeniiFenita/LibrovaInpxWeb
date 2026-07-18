@@ -7,6 +7,7 @@ node_modules
 web/**/node_modules
 web/**/dist
 **/.env
+.env.deploy
 .env.local
 deploy/inpx-web-reader/.env
 *.tsbuildinfo

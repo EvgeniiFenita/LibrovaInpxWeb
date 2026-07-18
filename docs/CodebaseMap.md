@@ -79,7 +79,7 @@ Scan progress reports reused records, segment change counts, skipped/opened arch
 - Runtime version owner: `VERSION.txt`; release updates keep `vcpkg.json` and the web package manifest synchronized.
 - Docker: `deploy/inpx-web-reader`.
 - Remote orchestration: `BootstrapRemoteLinux.py` and `RunRemoteLinux.py`.
-- Linux worker: `RunLinuxTests.py`.
+- Linux verification/release workers: `RunLinuxTests.py` and `RunRelease.py`.
 - NAS/Linux Docker bundle: `PrepareDeployBundle.py`.
 
 ## Test navigation
@@ -89,6 +89,7 @@ Scan progress reports reused records, segment change counts, skipped/opened arch
 - Web unit/component: `RunWebUi.py test`.
 - Browser/real server: `RunWebUi.py test:e2e` on Linux or `RunRemoteLinux.py e2e` from another development host.
 - Docker/Compose end to end: `RunRemoteLinux.py test`.
+- Verified NAS release bundle: `RunRemoteLinux.py release`; deployment to the NAS remains manual.
 - Native coverage: `RunCoverage.py` under `out/reports/coverage/native`; web coverage: `RunWebUi.py test:coverage` under `out/web/inpx-web-reader/coverage/web`.
 - Memory/race hardening: `RunSanitizers.py` with `linux-asan` or `linux-tsan`.
 - FB2 and INPX/archive fuzzing: `RunFuzzers.py`, with deterministic seed corpora and crash artifacts under `out/fuzz`.

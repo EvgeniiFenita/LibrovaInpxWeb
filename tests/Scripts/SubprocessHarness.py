@@ -400,6 +400,9 @@ def copy_entry_script(source_script: Path, isolated_repo: Path) -> Path:
     remote_linux = source_script.parent / "_remote_linux.py"
     if remote_linux.exists():
         shutil.copy2(remote_linux, scripts_dir / "_remote_linux.py")
+    deploy_helpers = source_script.parent / "_deploy.py"
+    if deploy_helpers.exists():
+        shutil.copy2(deploy_helpers, scripts_dir / "_deploy.py")
     write_fake_common(scripts_dir)
     return destination
 

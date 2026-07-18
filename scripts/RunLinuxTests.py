@@ -947,6 +947,22 @@ def verify_runtime_image_shape(repo_root: Path, image_tag: str) -> None:
         raise RuntimeError(
             f"Runtime image platform is {image_platform or '<empty>'}, expected linux/amd64."
         )
+    image_title = run_capture(
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            '{{index .Config.Labels "org.opencontainers.image.title"}}',
+            image_tag,
+        ],
+        repo_root,
+    ).strip()
+    if image_title != "InpxWebReader":
+        raise RuntimeError(
+            "Runtime image must carry org.opencontainers.image.title=InpxWebReader "
+            "for scoped NAS cleanup."
+        )
     run(
         [
             "docker",
