@@ -1,0 +1,3 @@
+# SQLite WAL recovery coordinates this process-shared mmap region with file locks.
+# TSan cannot observe those locks and reports walIndexWriteHdr as an in-process race.
+race:walIndexWriteHdr

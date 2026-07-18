@@ -1,0 +1,35 @@
+{
+  "name": "@inpx-web-reader/web-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ./tools/run-web-ui.mjs dev",
+    "build": "node ./tools/run-web-ui.mjs build",
+    "test": "node ./tools/run-web-ui.mjs test",
+    "test:coverage": "node ./tools/run-web-ui.mjs test:coverage",
+    "test:e2e": "node ./tools/run-web-ui.mjs test:e2e",
+    "audit": "node ./tools/run-web-ui.mjs audit"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.62.8",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitest/coverage-v8": "^3.2.4",
+    "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.4.2",
+    "vitest": "^3.2.4"
+  }
+}

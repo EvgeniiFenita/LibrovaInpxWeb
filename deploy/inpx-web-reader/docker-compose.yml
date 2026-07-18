@@ -1,0 +1,56 @@
+services:
+  inpx-web-reader:
+    image: ${INPX_WEB_READER_IMAGE:-inpx-web-reader:latest}
+    platform: linux/amd64
+    user: "${INPX_WEB_READER_CONTAINER_UID:-10001}:${INPX_WEB_READER_CONTAINER_GID:-10001}"
+    ports:
+      - "${INPX_WEB_READER_HOST_PORT:-8080}:8080"
+    volumes:
+      - ${INPX_WEB_READER_SOURCE_PATH:?Set INPX_WEB_READER_SOURCE_PATH to the INPX source directory}:/source:ro
+      - ${INPX_WEB_READER_DATA_PATH:?Set INPX_WEB_READER_DATA_PATH to a writable InpxWebReader data directory}:/data
+    environment:
+      INPX_WEB_READER_SOURCE_ROOT: /source
+      INPX_WEB_READER_INPX_PATH: ${INPX_WEB_READER_INPX_PATH:-}
+      INPX_WEB_READER_ARCHIVE_ROOT: ${INPX_WEB_READER_ARCHIVE_ROOT:-}
+      INPX_WEB_READER_CACHE_ROOT: /data/cache
+      INPX_WEB_READER_RUNTIME_ROOT: /data/runtime
+      INPX_WEB_READER_CONFIG_PATH: /tmp/inpx-web-reader/server.json
+      INPX_WEB_READER_STATIC_ASSETS_ROOT: /opt/inpx-web-reader/web
+      INPX_WEB_READER_CONVERTER_PATH: ${INPX_WEB_READER_CONVERTER_PATH:-}
+      INPX_WEB_READER_SERVER_HOST: 0.0.0.0
+      INPX_WEB_READER_SERVER_PORT: 8080
+      INPX_WEB_READER_AUTH_TOKEN_FILE: /run/secrets/inpx_web_reader_auth_token
+      INPX_WEB_READER_LOG_LEVEL: ${INPX_WEB_READER_LOG_LEVEL:-info}
+      INPX_WEB_READER_LOG_MAX_FILE_SIZE_MIB: ${INPX_WEB_READER_LOG_MAX_FILE_SIZE_MIB:-20}
+      INPX_WEB_READER_LOG_MAX_ROTATED_FILES: ${INPX_WEB_READER_LOG_MAX_ROTATED_FILES:-4}
+      INPX_WEB_READER_MAX_HTTP_THREADS: ${INPX_WEB_READER_MAX_HTTP_THREADS:-4}
+      INPX_WEB_READER_MAX_HTTP_QUEUED_REQUESTS: ${INPX_WEB_READER_MAX_HTTP_QUEUED_REQUESTS:-32}
+      INPX_WEB_READER_MAX_BACKEND_QUEUE_DEPTH: ${INPX_WEB_READER_MAX_BACKEND_QUEUE_DEPTH:-64}
+      INPX_WEB_READER_MAX_SCAN_WORKERS: ${INPX_WEB_READER_MAX_SCAN_WORKERS:-4}
+      INPX_WEB_READER_MAX_CONCURRENT_DOWNLOADS: ${INPX_WEB_READER_MAX_CONCURRENT_DOWNLOADS:-2}
+      INPX_WEB_READER_MAX_REQUEST_BODY_BYTES: ${INPX_WEB_READER_MAX_REQUEST_BODY_BYTES:-65536}
+      INPX_WEB_READER_HTTP_READ_TIMEOUT_MS: ${INPX_WEB_READER_HTTP_READ_TIMEOUT_MS:-15000}
+      INPX_WEB_READER_HTTP_WRITE_TIMEOUT_MS: ${INPX_WEB_READER_HTTP_WRITE_TIMEOUT_MS:-30000}
+      INPX_WEB_READER_MAX_COVER_CACHE_MIB: ${INPX_WEB_READER_MAX_COVER_CACHE_MIB:-128}
+      INPX_WEB_READER_MAX_STEADY_STATE_MEMORY_MIB: ${INPX_WEB_READER_MAX_STEADY_STATE_MEMORY_MIB:-1024}
+      INPX_WEB_READER_MAX_PAGE_SIZE: ${INPX_WEB_READER_MAX_PAGE_SIZE:-200}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    secrets:
+      - inpx_web_reader_auth_token
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/ready"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+secrets:
+  inpx_web_reader_auth_token:
+    file: ${INPX_WEB_READER_AUTH_TOKEN_FILE:?Set INPX_WEB_READER_AUTH_TOKEN_FILE to a file containing the private access token}

@@ -1,0 +1,8 @@
+exclude = ["out"]
+line-length = 120
+
+[lint]
+select = ["E", "F"]
+
+[lint.per-file-ignores]
+"scripts/Run*.py" = ["E402"]

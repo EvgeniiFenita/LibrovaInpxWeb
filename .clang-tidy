@@ -1,0 +1,19 @@
+Checks: >
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-invalid-enum-default-initialization,
+  -bugprone-throwing-static-initialization,
+  performance-*,
+  -performance-enum-size,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-deprecated-headers,
+  readability-simplify-boolean-expr
+WarningsAsErrors: '*'
+CheckOptions:
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: 'std::stop_token;::std::stop_token'

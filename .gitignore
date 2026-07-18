@@ -1,0 +1,65 @@
+# Host metadata
+.DS_Store
+
+# Editors
+.idea/
+.obsidian/
+.vscode/
+*.code-workspace
+
+# CMake
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+!.agents/**/testing/
+install_manifest.txt
+cmake_install.cmake
+
+# Native build outputs
+out/
+bin/
+lib/
+artifacts/
+*.o
+*.lo
+*.la
+*.a
+*.so
+*.so.*
+
+# vcpkg
+vcpkg_installed/
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node / web asset tooling
+node_modules/
+web/**/node_modules/
+web/**/dist/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# Local secrets
+.env
+**/.env
+!.env.example
+.env.local
+deploy/inpx-web-reader/.env
+
+# Archives and temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.zip.tmp

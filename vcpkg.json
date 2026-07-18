@@ -1,0 +1,23 @@
+{
+  "name": "inpx-web-reader",
+  "version-string": "0.1.0",
+  "builtin-baseline": "b5d1a94fb7f88fd835e360fd23a45a09ceedbf48",
+  "dependencies": [
+    "bshoshany-thread-pool",
+    "catch2",
+    "cpp-httplib",
+    "libiconv",
+    "libzip",
+    "nlohmann-json",
+    "openssl",
+    "pugixml",
+    "spdlog",
+    "stb",
+    {
+      "name": "sqlite3",
+      "features": [
+        "fts5"
+      ]
+    }
+  ]
+}
