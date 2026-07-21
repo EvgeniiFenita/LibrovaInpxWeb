@@ -21,10 +21,10 @@ from _common import (  # noqa: E402
     resolve_under_root,
 )
 from _deploy import (  # noqa: E402
-    validate_absolute_nas_path,
+    validate_absolute_host_path,
     validate_access_password as validate_deploy_access_password,
     validate_host_port,
-    validate_non_overlapping_nas_roots,
+    validate_non_overlapping_host_roots,
 )
 from _remote_linux import (  # noqa: E402
     DEFAULT_ENV_FILE,
@@ -43,8 +43,8 @@ DEFAULT_CONVERTER_ASSET_NAME = "fbc-linux-amd64.zip"
 
 @dataclass(frozen=True)
 class CDeployConfig:
-    nas_source_root: str
-    nas_app_root: str
+    host_source_root: str
+    host_app_root: str
     access_password: str = ""
     host_port: int = 8080
     converter_enabled: bool = True
@@ -59,8 +59,8 @@ def add_deploy_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_DEPLOY_ENV_FILE,
         help="Deployment defaults file. Defaults to the ignored .env.deploy in the repository root.",
     )
-    parser.add_argument("--nas-source-root")
-    parser.add_argument("--nas-app-root")
+    parser.add_argument("--host-source-root")
+    parser.add_argument("--host-app-root")
     parser.add_argument("--host-port", type=int)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--image-tag")
@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
 
     release_parser = subparsers.add_parser(
         "release",
-        help="Verify once, package the same image, and retrieve the NAS deployment bundle.",
+        help="Verify once, package the same image, and retrieve the target Linux host deployment bundle.",
     )
     add_deploy_arguments(release_parser)
     release_parser.add_argument("--parallel-jobs", type=int)
@@ -148,8 +148,8 @@ def load_deploy_config(env_file: Path, repo_root: Path) -> CDeployConfig | None:
 
     values = load_env_values(resolved_path)
     allowed_keys = {
-        "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT",
-        "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT",
+        "INPX_WEB_READER_DEPLOY_HOST_SOURCE_ROOT",
+        "INPX_WEB_READER_DEPLOY_HOST_APP_ROOT",
         "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD",
         "INPX_WEB_READER_DEPLOY_HOST_PORT",
         "INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED",
@@ -162,21 +162,20 @@ def load_deploy_config(env_file: Path, repo_root: Path) -> CDeployConfig | None:
     if unknown_keys:
         raise RuntimeError("Unsupported deployment fields: " + ", ".join(unknown_keys))
 
-    source_root = values.get("INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT", "").strip()
-    app_root = values.get("INPX_WEB_READER_DEPLOY_NAS_APP_ROOT", "").strip()
+    source_root = values.get("INPX_WEB_READER_DEPLOY_HOST_SOURCE_ROOT", "").strip()
+    app_root = values.get("INPX_WEB_READER_DEPLOY_HOST_APP_ROOT", "").strip()
     host_port_text = values.get("INPX_WEB_READER_DEPLOY_HOST_PORT", "8080")
     converter_enabled_text = values.get("INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED", "true")
     return CDeployConfig(
-        nas_source_root=source_root,
-        nas_app_root=app_root,
+        host_source_root=source_root,
+        host_app_root=app_root,
         access_password=values.get("INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD", ""),
         host_port=parse_deploy_port(host_port_text, "INPX_WEB_READER_DEPLOY_HOST_PORT"),
         converter_enabled=parse_deploy_bool(
             converter_enabled_text,
             "INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED",
         ),
-        converter_version=values.get("INPX_WEB_READER_DEPLOY_CONVERTER_VERSION", "latest").strip()
-        or "latest",
+        converter_version=values.get("INPX_WEB_READER_DEPLOY_CONVERTER_VERSION", "latest").strip() or "latest",
         converter_asset_name=values.get(
             "INPX_WEB_READER_DEPLOY_CONVERTER_ASSET_NAME",
             DEFAULT_CONVERTER_ASSET_NAME,
@@ -187,16 +186,16 @@ def load_deploy_config(env_file: Path, repo_root: Path) -> CDeployConfig | None:
 
 def resolve_deploy_args(args: argparse.Namespace, repo_root: Path) -> argparse.Namespace:
     config = load_deploy_config(args.deploy_env_file, repo_root)
-    args.nas_source_root = args.nas_source_root or (config.nas_source_root if config else "")
-    args.nas_app_root = args.nas_app_root or (config.nas_app_root if config else "")
-    if not args.nas_source_root or not args.nas_app_root:
+    args.host_source_root = args.host_source_root or (config.host_source_root if config else "")
+    args.host_app_root = args.host_app_root or (config.host_app_root if config else "")
+    if not args.host_source_root or not args.host_app_root:
         raise RuntimeError(
-            "NAS source and application roots are required. Copy .env.deploy.example to .env.deploy "
-            "or pass --nas-source-root and --nas-app-root."
+            "Target Linux host source and application roots are required. Copy .env.deploy.example to "
+            ".env.deploy or pass --host-source-root and --host-app-root."
         )
-    args.nas_source_root = validate_absolute_nas_path(args.nas_source_root, "--nas-source-root")
-    args.nas_app_root = validate_absolute_nas_path(args.nas_app_root, "--nas-app-root")
-    validate_non_overlapping_nas_roots(args.nas_source_root, args.nas_app_root)
+    args.host_source_root = validate_absolute_host_path(args.host_source_root, "--host-source-root")
+    args.host_app_root = validate_absolute_host_path(args.host_app_root, "--host-app-root")
+    validate_non_overlapping_host_roots(args.host_source_root, args.host_app_root)
 
     args.host_port = args.host_port if args.host_port is not None else (config.host_port if config else 8080)
     validate_host_port(args.host_port)
@@ -353,10 +352,10 @@ def build_bundle_command(args: argparse.Namespace, remoteTokenFile: PurePosixPat
     command = [
         "python3",
         "scripts/PrepareDeployBundle.py",
-        "--nas-source-root",
-        args.nas_source_root,
-        "--nas-app-root",
-        args.nas_app_root,
+        "--host-source-root",
+        args.host_source_root,
+        "--host-app-root",
+        args.host_app_root,
         "--host-port",
         str(args.host_port),
         "--image-tag",
@@ -386,10 +385,10 @@ def build_release_command(args: argparse.Namespace, remoteTokenFile: PurePosixPa
     command = [
         "python3",
         "scripts/RunRelease.py",
-        "--nas-source-root",
-        args.nas_source_root,
-        "--nas-app-root",
-        args.nas_app_root,
+        "--host-source-root",
+        args.host_source_root,
+        "--host-app-root",
+        args.host_app_root,
         "--host-port",
         str(args.host_port),
         "--image-tag",

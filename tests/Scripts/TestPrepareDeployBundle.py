@@ -15,21 +15,21 @@ from SubprocessHarness import load_script_module, run_entry_script_help
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PREPARE_NAS_DEPLOY_BUNDLE_SCRIPT = REPO_ROOT / "scripts" / "PrepareDeployBundle.py"
+PREPARE_DEPLOY_BUNDLE_SCRIPT = REPO_ROOT / "scripts" / "PrepareDeployBundle.py"
 DEPLOY_ENV_TEMPLATE = REPO_ROOT / "deploy" / "inpx-web-reader" / ".env.template"
 DEPLOY_COMPOSE_TEMPLATE = REPO_ROOT / "deploy" / "inpx-web-reader" / "docker-compose.yml"
 TEST_OUTPUT_ROOT = REPO_ROOT / "out" / "tests" / "PrepareDeployBundle"
 
 
-def load_prepare_nas_deploy_bundle_module() -> object:
-    return load_script_module(PREPARE_NAS_DEPLOY_BUNDLE_SCRIPT, "prepare_nas_deploy_bundle_under_test")
+def load_prepare_deploy_bundle_module() -> object:
+    return load_script_module(PREPARE_DEPLOY_BUNDLE_SCRIPT, "prepare_deploy_bundle_under_test")
 
 
 class PrepareDeployBundleScriptTests(unittest.TestCase):
     def setUp(self) -> None:
         TEST_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
         self._temp_dir = tempfile.TemporaryDirectory(
-            prefix="inpx-web-reader-prepare-nas-deploy-",
+            prefix="inpx-web-reader-prepare-host-deploy-",
             dir=TEST_OUTPUT_ROOT,
         )
         self._repo_root = Path(self._temp_dir.name)
@@ -39,11 +39,11 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
             "services:\n"
             "  inpx-web-reader:\n"
             "    image: ${INPX_WEB_READER_IMAGE:-inpx-web-reader:latest}\n"
-            "    user: \"${INPX_WEB_READER_CONTAINER_UID:-10001}:${INPX_WEB_READER_CONTAINER_GID:-10001}\"\n"
+            '    user: "${INPX_WEB_READER_CONTAINER_UID:-10001}:${INPX_WEB_READER_CONTAINER_GID:-10001}"\n'
             "    restart: unless-stopped\n",
             encoding="utf-8",
         )
-        self._module = load_prepare_nas_deploy_bundle_module()
+        self._module = load_prepare_deploy_bundle_module()
         self._platform_patch = mock.patch.object(self._module.sys, "platform", "linux")
         self._machine_patch = mock.patch.object(self._module.platform, "machine", return_value="x86_64")
         self._platform_patch.start()
@@ -55,7 +55,7 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
         self._temp_dir.cleanup()
 
     def _prepare_runnable_generated_script(self) -> tuple[Path, Path]:
-        source_root = self._repo_root / "nas-source"
+        source_root = self._repo_root / "host-source"
         source_root.mkdir()
         bundle_root = self._repo_root / "out" / "deploy" / "inpx-web-reader"
         with (
@@ -65,9 +65,9 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
+                    "--host-source-root",
                     str(source_root),
-                    "--nas-app-root",
+                    "--host-app-root",
                     str(bundle_root),
                     "--skip-image-build",
                     "--skip-converter-download",
@@ -86,7 +86,7 @@ class PrepareDeployBundleScriptTests(unittest.TestCase):
         )
         (bundle_root / self._module.BUNDLE_MANIFEST_NAME).write_text("{}\n", encoding="utf-8")
 
-        fake_bin = self._repo_root / "out" / "fake-nas-bin"
+        fake_bin = self._repo_root / "out" / "fake-host-bin"
         fake_bin.mkdir(parents=True)
         fake_commands = {
             "docker": """#!/bin/sh
@@ -215,7 +215,7 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
             command_path.chmod(0o755)
         return bundle_root, fake_bin
 
-    def _run_generated_nas_script(self, mode: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    def _run_generated_host_script(self, mode: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
         bundle_root, fake_bin = self._prepare_runnable_generated_script()
         docker_log = self._repo_root / "out" / "fake-docker.log"
         docker_state = self._repo_root / "out" / "fake-docker.state"
@@ -229,7 +229,7 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
             }
         )
         result = subprocess.run(
-            ["sh", str(bundle_root / "RUN_ON_NAS.sh")],
+            ["sh", str(bundle_root / "RUN_ON_HOST.sh")],
             cwd=bundle_root,
             env=environment,
             check=False,
@@ -241,14 +241,14 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
 
     def test_help_runs_without_side_effects(self) -> None:
         with tempfile.TemporaryDirectory(
-            prefix="inpx-web-reader-prepare-nas-help-",
+            prefix="inpx-web-reader-prepare-host-help-",
             dir=TEST_OUTPUT_ROOT,
         ) as temp_dir:
-            result = run_entry_script_help(PREPARE_NAS_DEPLOY_BUNDLE_SCRIPT, Path(temp_dir))
+            result = run_entry_script_help(PREPARE_DEPLOY_BUNDLE_SCRIPT, Path(temp_dir))
 
         self.assertIn("Prepare a Linux Docker deployment bundle", result.stdout)
-        self.assertIn("--nas-source-root", result.stdout)
-        self.assertIn("--nas-app-root", result.stdout)
+        self.assertIn("--host-source-root", result.stdout)
+        self.assertIn("--host-app-root", result.stdout)
 
     def test_deploy_env_template_uses_the_compose_source_path_contract(self) -> None:
         env_template = DEPLOY_ENV_TEMPLATE.read_text(encoding="utf-8")
@@ -260,8 +260,7 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         compose_template = DEPLOY_COMPOSE_TEMPLATE.read_text(encoding="utf-8")
 
         self.assertIn(
-            'user: "${INPX_WEB_READER_CONTAINER_UID:-10001}:'
-            '${INPX_WEB_READER_CONTAINER_GID:-10001}"',
+            'user: "${INPX_WEB_READER_CONTAINER_UID:-10001}:${INPX_WEB_READER_CONTAINER_GID:-10001}"',
             compose_template,
         )
 
@@ -273,10 +272,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books/flibusta",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books/flibusta",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--host-port",
                     "8091",
                     "--skip-image-build",
@@ -292,10 +291,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
 
         env_text = (bundle_root / ".env").read_text(encoding="utf-8")
         self.assertIn("COMPOSE_PROJECT_NAME=inpx-web-reader", env_text)
-        self.assertIn("INPX_WEB_READER_IMAGE=inpx-web-reader:nas-local", env_text)
+        self.assertIn("INPX_WEB_READER_IMAGE=inpx-web-reader:linux-host-local", env_text)
         self.assertIn("INPX_WEB_READER_HOST_PORT=8091", env_text)
-        self.assertIn("INPX_WEB_READER_SOURCE_PATH=/volume1/books/flibusta", env_text)
-        self.assertIn("INPX_WEB_READER_DATA_PATH=/volume1/docker/inpx-web-reader/data", env_text)
+        self.assertIn("INPX_WEB_READER_SOURCE_PATH=/srv/books/flibusta", env_text)
+        self.assertIn("INPX_WEB_READER_DATA_PATH=/srv/inpx-web-reader/data", env_text)
         self.assertIn("INPX_WEB_READER_CONVERTER_PATH=\n", env_text)
         self.assertNotIn("INPX_WEB_READER_CONVERTER_HOST_PATH", env_text)
         self.assertIn("INPX_WEB_READER_MAX_SCAN_WORKERS=4", env_text)
@@ -303,7 +302,7 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         self.assertIn("INPX_WEB_READER_LOG_MAX_FILE_SIZE_MIB=20", env_text)
         self.assertIn("INPX_WEB_READER_LOG_MAX_ROTATED_FILES=4", env_text)
         self.assertIn(
-            "INPX_WEB_READER_AUTH_TOKEN_FILE=/volume1/docker/inpx-web-reader/secrets/inpx-web-reader-auth-token.txt",
+            "INPX_WEB_READER_AUTH_TOKEN_FILE=/srv/inpx-web-reader/secrets/inpx-web-reader-auth-token.txt",
             env_text,
         )
 
@@ -313,8 +312,8 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
             r"^[23456789abcdefghjkmnpqrstuvwxyz]{4}(?:-[23456789abcdefghjkmnpqrstuvwxyz]{4}){3}$",
         )
 
-        runner_text = (bundle_root / "RUN_ON_NAS.sh").read_text(encoding="utf-8")
-        subprocess.run(["sh", "-n", str(bundle_root / "RUN_ON_NAS.sh")], check=True)
+        runner_text = (bundle_root / "RUN_ON_HOST.sh").read_text(encoding="utf-8")
+        subprocess.run(["sh", "-n", str(bundle_root / "RUN_ON_HOST.sh")], check=True)
         self.assertIn("export COMPOSE_PROJECT_NAME=inpx-web-reader", runner_text)
         self.assertIn("CONVERTER_ENABLED=0", runner_text)
         self.assertNotIn(". ./.env", runner_text)
@@ -334,10 +333,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         self.assertIn("no distinct rollback image is available", runner_text)
         self.assertIn("CONTAINER_UID=10001", runner_text)
         self.assertIn("choose_container_identity", runner_text)
-        self.assertIn("stat -c '%u' \"$NAS_SOURCE_ROOT\"", runner_text)
-        self.assertIn("[ \"$source_uid\" != \"0\" ] && [ \"$source_gid\" != \"0\" ]", runner_text)
+        self.assertIn("stat -c '%u' \"$HOST_SOURCE_ROOT\"", runner_text)
+        self.assertIn('[ "$source_uid" != "0" ] && [ "$source_gid" != "0" ]', runner_text)
         self.assertIn("root container identity is forbidden", runner_text)
-        self.assertIn("container_can_read_source \"10001\" \"10001\"", runner_text)
+        self.assertIn('container_can_read_source "10001" "10001"', runner_text)
         self.assertIn("Container uid/gid selected from safe fallback", runner_text)
         self.assertIn("Container uid/gid selected from source directory owner", runner_text)
         self.assertIn("export INPX_WEB_READER_CONTAINER_UID", runner_text)
@@ -345,12 +344,12 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         self.assertIn("bundle_compose()", runner_text)
         self.assertIn("if converter_enabled; then", runner_text)
         self.assertIn("verify_converter_executable_by_container", runner_text)
-        self.assertIn("chown \"$CONTAINER_UID:$CONTAINER_GID\" \"$token_file\"", runner_text)
+        self.assertIn('chown "$CONTAINER_UID:$CONTAINER_GID" "$token_file"', runner_text)
         self.assertIn("verify_token_readable_by_container", runner_text)
-        self.assertIn("--user \"$CONTAINER_UID:$CONTAINER_GID\"", runner_text)
+        self.assertIn('--user "$CONTAINER_UID:$CONTAINER_GID"', runner_text)
         self.assertIn("bundle_compose up -d --force-recreate --remove-orphans", runner_text)
         self.assertIn("image_platform_for_tag", runner_text)
-        self.assertIn('loaded_image_platform\" = \"linux/amd64', runner_text)
+        self.assertIn('loaded_image_platform" = "linux/amd64', runner_text)
         self.assertIn("EPUB conversion is disabled for this bundle", runner_text)
         self.assertIn("Host port $HOST_PORT is already in use", runner_text)
         self.assertIn("ip route get 1.1.1.1", runner_text)
@@ -366,28 +365,28 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         self.assertIn("INPX_WEB_READER_CONTAINER_UID", compose_text)
         self.assertIn("INPX_WEB_READER_CONTAINER_GID", compose_text)
 
-        stop_text = (bundle_root / "STOP_ON_NAS.sh").read_text(encoding="utf-8")
-        subprocess.run(["sh", "-n", str(bundle_root / "STOP_ON_NAS.sh")], check=True)
-        self.assertIn("NAS_APP_ROOT='/volume1/docker/inpx-web-reader'", stop_text)
+        stop_text = (bundle_root / "STOP_ON_HOST.sh").read_text(encoding="utf-8")
+        subprocess.run(["sh", "-n", str(bundle_root / "STOP_ON_HOST.sh")], check=True)
+        self.assertIn("HOST_APP_ROOT='/srv/inpx-web-reader'", stop_text)
         self.assertIn("export COMPOSE_PROJECT_NAME=inpx-web-reader", stop_text)
         self.assertIn("CONVERTER_ENABLED=0", stop_text)
-        self.assertIn("cd \"$NAS_APP_ROOT\"", stop_text)
+        self.assertIn('cd "$HOST_APP_ROOT"', stop_text)
         self.assertIn(
             'if [ "$CONVERTER_ENABLED" -eq 1 ] && [ -f docker-compose.converter.yml ]; then',
             stop_text,
         )
 
-        readme_text = (bundle_root / "README_NAS_DEPLOY.md").read_text(encoding="utf-8")
-        self.assertIn("sh RUN_ON_NAS.sh", readme_text)
-        self.assertIn("http://<NAS-IP>:8091/", readme_text)
+        readme_text = (bundle_root / "README_HOST_DEPLOY.md").read_text(encoding="utf-8")
+        self.assertIn("sh RUN_ON_HOST.sh", readme_text)
+        self.assertIn("http://<HOSTNAME-OR-IP>:8091/", readme_text)
         self.assertIn("existing password is reused", readme_text)
         self.assertIn("EPUB conversion is disabled", readme_text)
         self.assertIn("private password", readme_text)
         self.assertIn("It never runs a global Docker prune", readme_text)
 
-    @unittest.skipUnless(os.name == "posix", "The generated NAS script requires POSIX sh.")
-    def test_generated_nas_script_cleans_only_unused_scoped_artifacts_after_health(self) -> None:
-        result, docker_calls = self._run_generated_nas_script("success")
+    @unittest.skipUnless(os.name == "posix", "The generated host script requires POSIX sh.")
+    def test_generated_host_script_cleans_only_unused_scoped_artifacts_after_health(self) -> None:
+        result, docker_calls = self._run_generated_host_script("success")
 
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("rm old-stopped", docker_calls)
@@ -397,12 +396,12 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         self.assertNotIn("image rm -f sha256:foreign", docker_calls)
         self.assertIn("because a container still references it", result.stdout)
 
-    @unittest.skipUnless(os.name == "posix", "The generated NAS script requires POSIX sh.")
-    def test_generated_nas_script_rolls_back_before_cleanup_when_health_fails(self) -> None:
-        result, docker_calls = self._run_generated_nas_script("rollback")
+    @unittest.skipUnless(os.name == "posix", "The generated host script requires POSIX sh.")
+    def test_generated_host_script_rolls_back_before_cleanup_when_health_fails(self) -> None:
+        result, docker_calls = self._run_generated_host_script("rollback")
 
         self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("tag sha256:old inpx-web-reader:nas-local", docker_calls)
+        self.assertIn("tag sha256:old inpx-web-reader:linux-host-local", docker_calls)
         self.assertIn("image rm -f sha256:new", docker_calls)
         self.assertNotIn("rm old-stopped", docker_calls)
         self.assertNotIn("image rm -f sha256:ancient", docker_calls)
@@ -418,10 +417,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books/flibusta",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books/flibusta",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--skip-image-build",
                 ],
             ),
@@ -435,7 +434,7 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         env_text = (bundle_root / ".env").read_text(encoding="utf-8")
         self.assertIn("INPX_WEB_READER_CONVERTER_PATH=/converter/fbc", env_text)
         self.assertIn(
-            "INPX_WEB_READER_CONVERTER_HOST_PATH=/volume1/docker/inpx-web-reader/converter",
+            "INPX_WEB_READER_CONVERTER_HOST_PATH=/srv/inpx-web-reader/converter",
             env_text,
         )
         converter_compose = (bundle_root / "docker-compose.converter.yml").read_text(encoding="utf-8")
@@ -443,9 +442,9 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         self.assertIn(":/converter:ro", converter_compose)
         self.assertIn("INPX_WEB_READER_CONVERTER_PATH: /converter/fbc", converter_compose)
         self.assertNotIn("user:", converter_compose)
-        runner_text = (bundle_root / "RUN_ON_NAS.sh").read_text(encoding="utf-8")
+        runner_text = (bundle_root / "RUN_ON_HOST.sh").read_text(encoding="utf-8")
         self.assertIn("CONVERTER_ENABLED=1", runner_text)
-        readme_text = (bundle_root / "README_NAS_DEPLOY.md").read_text(encoding="utf-8")
+        readme_text = (bundle_root / "README_HOST_DEPLOY.md").read_text(encoding="utf-8")
         self.assertIn("EPUB conversion is enabled", readme_text)
 
     def test_prepare_bundle_uses_token_file(self) -> None:
@@ -458,10 +457,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--token-file",
                     str(token_file),
                     "--skip-image-build",
@@ -474,21 +473,16 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
 
         self.assertEqual(exit_code, 0)
         token = (
-            self._repo_root
-            / "out"
-            / "deploy"
-            / "inpx-web-reader"
-            / "secrets"
-            / "inpx-web-reader-auth-token.txt"
+            self._repo_root / "out" / "deploy" / "inpx-web-reader" / "secrets" / "inpx-web-reader-auth-token.txt"
         ).read_text(encoding="utf-8")
         self.assertEqual(token, "example-token\n")
 
     def test_env_value_rejects_shell_substitution_bytes(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "backticks or backslashes"):
-            self._module.env_value("/volume1/books/`touch pwned`")
+            self._module.env_value("/srv/books/`touch pwned`")
 
         with self.assertRaisesRegex(RuntimeError, "backticks or backslashes"):
-            self._module.env_value(r"/volume1/books\library")
+            self._module.env_value(r"/srv/books\library")
 
     @unittest.skipUnless(os.name == "posix", "POSIX mode bits are meaningful only on POSIX hosts.")
     def test_prepare_bundle_writes_owner_only_token_file(self) -> None:
@@ -499,10 +493,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--skip-image-build",
                     "--skip-converter-download",
                 ],
@@ -513,24 +507,14 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
 
         self.assertEqual(exit_code, 0)
         token_path = (
-            self._repo_root
-            / "out"
-            / "deploy"
-            / "inpx-web-reader"
-            / "secrets"
-            / "inpx-web-reader-auth-token.txt"
+            self._repo_root / "out" / "deploy" / "inpx-web-reader" / "secrets" / "inpx-web-reader-auth-token.txt"
         )
         self.assertEqual(stat.S_IMODE(token_path.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(token_path.parent.stat().st_mode), 0o700)
 
     def test_prepare_bundle_reuses_existing_generated_token_by_default(self) -> None:
         existing_token_path = (
-            self._repo_root
-            / "out"
-            / "deploy"
-            / "inpx-web-reader"
-            / "secrets"
-            / "inpx-web-reader-auth-token.txt"
+            self._repo_root / "out" / "deploy" / "inpx-web-reader" / "secrets" / "inpx-web-reader-auth-token.txt"
         )
         existing_token_path.parent.mkdir(parents=True)
         existing_token_path.write_text("stable-token\n", encoding="utf-8")
@@ -542,10 +526,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--skip-image-build",
                     "--skip-converter-download",
                 ],
@@ -567,10 +551,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--token-file",
                     str(token_file),
                     "--skip-image-build",
@@ -594,10 +578,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--token-file",
                     str(token_file),
                     "--skip-image-build",
@@ -619,7 +603,7 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 with self.assertRaisesRegex(RuntimeError, "printable ASCII characters without spaces"):
                     self._module.read_one_line_token_file(token_file, "--token-file")
 
-    def test_prepare_bundle_rejects_non_absolute_nas_paths(self) -> None:
+    def test_prepare_bundle_rejects_non_absolute_host_paths(self) -> None:
         with (
             mock.patch.object(self._module, "repository_root", return_value=self._repo_root),
             mock.patch.object(
@@ -627,10 +611,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
+                    "--host-source-root",
                     "relative/books",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--skip-image-build",
                     "--skip-converter-download",
                 ],
@@ -640,24 +624,24 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
             exit_code = self._module.main()
 
         self.assertEqual(exit_code, 1)
-        self.assertIn("must be an absolute Linux/NAS path", stderr.getvalue())
+        self.assertIn("must be an absolute target Linux host path", stderr.getvalue())
 
-    def test_prepare_bundle_rejects_root_parent_and_overlapping_nas_paths(self) -> None:
+    def test_prepare_bundle_rejects_root_parent_and_overlapping_host_paths(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "must not be the filesystem root"):
-            self._module.validate_absolute_nas_path("/", "--nas-app-root")
+            self._module.validate_absolute_host_path("/", "--host-app-root")
         with self.assertRaisesRegex(RuntimeError, "parent-directory components"):
-            self._module.validate_absolute_nas_path("/volume/books/../docker", "--nas-app-root")
+            self._module.validate_absolute_host_path("/srv/books/../docker", "--host-app-root")
         with self.assertRaisesRegex(RuntimeError, "backticks, or backslashes"):
-            self._module.validate_absolute_nas_path("/volume/books/`unsafe`", "--nas-app-root")
+            self._module.validate_absolute_host_path("/srv/books/`unsafe`", "--host-app-root")
         with self.assertRaisesRegex(RuntimeError, "must not overlap"):
-            self._module.validate_non_overlapping_nas_roots(
-                "/volume/books/inpx",
-                "/volume/books/inpx/deployment",
+            self._module.validate_non_overlapping_host_roots(
+                "/srv/books/inpx",
+                "/srv/books/inpx/deployment",
             )
         with self.assertRaisesRegex(RuntimeError, "must not overlap"):
-            self._module.validate_non_overlapping_nas_roots(
-                "/volume/docker/inpx-web-reader/source",
-                "/volume/docker/inpx-web-reader",
+            self._module.validate_non_overlapping_host_roots(
+                "/srv/inpx-web-reader/source",
+                "/srv/inpx-web-reader",
             )
 
     def test_release_asset_helpers_select_linux_amd64_converter(self) -> None:
@@ -719,11 +703,14 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
             self._module.extract_converter_binary(duplicate_archive, self._repo_root / "converter-duplicate")
 
     def test_build_image_reports_missing_docker_cli(self) -> None:
-        with mock.patch.object(
-            self._module,
-            "ensure_docker_engine",
-            side_effect=RuntimeError("Docker CLI was not found on PATH."),
-        ), mock.patch.object(self._module.sys, "platform", "linux"):
+        with (
+            mock.patch.object(
+                self._module,
+                "ensure_docker_engine",
+                side_effect=RuntimeError("Docker CLI was not found on PATH."),
+            ),
+            mock.patch.object(self._module.sys, "platform", "linux"),
+        ):
             with self.assertRaisesRegex(RuntimeError, "Docker CLI was not found"):
                 self._module.build_and_save_image(
                     self._repo_root,
@@ -734,11 +721,14 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 )
 
     def test_build_image_reports_unreachable_docker_engine(self) -> None:
-        with mock.patch.object(
-            self._module,
-            "ensure_docker_engine",
-            side_effect=RuntimeError("Docker CLI is installed, but the Docker engine is not reachable."),
-        ), mock.patch.object(self._module.sys, "platform", "linux"):
+        with (
+            mock.patch.object(
+                self._module,
+                "ensure_docker_engine",
+                side_effect=RuntimeError("Docker CLI is installed, but the Docker engine is not reachable."),
+            ),
+            mock.patch.object(self._module.sys, "platform", "linux"),
+        ):
             with self.assertRaisesRegex(RuntimeError, "Docker engine is not reachable"):
                 self._module.build_and_save_image(
                     self._repo_root,
@@ -842,13 +832,15 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
         verify_platform.assert_called_once()
         self.assertEqual(
             commands,
-            [[
-                "docker",
-                "save",
-                "-o",
-                str(bundle_root / self._module.IMAGE_ARCHIVE_NAME),
-                "inpx-web-reader:verified",
-            ]],
+            [
+                [
+                    "docker",
+                    "save",
+                    "-o",
+                    str(bundle_root / self._module.IMAGE_ARCHIVE_NAME),
+                    "inpx-web-reader:verified",
+                ]
+            ],
         )
 
     def test_bundle_manifest_records_versioned_image_and_archive_checksum(self) -> None:
@@ -905,10 +897,10 @@ printf '1.1.1.1 via 192.0.2.1 dev eth0 src 192.0.2.25\n'
                 "argv",
                 [
                     "PrepareDeployBundle.py",
-                    "--nas-source-root",
-                    "/volume1/books",
-                    "--nas-app-root",
-                    "/volume1/docker/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--skip-image-build",
                     "--skip-converter-download",
                 ],

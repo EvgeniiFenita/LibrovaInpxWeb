@@ -961,7 +961,7 @@ def verify_runtime_image_shape(repo_root: Path, image_tag: str) -> None:
     if image_title != "InpxWebReader":
         raise RuntimeError(
             "Runtime image must carry org.opencontainers.image.title=InpxWebReader "
-            "for scoped NAS cleanup."
+            "for scoped deployment cleanup."
         )
     run(
         [

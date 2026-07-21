@@ -16,24 +16,18 @@ def validate_access_password(password: str, source_description: str) -> str:
     if password != password.strip():
         raise RuntimeError(f"{source_description} must not start or end with whitespace.")
     if len(password) < MIN_ACCESS_PASSWORD_LENGTH:
-        raise RuntimeError(
-            f"{source_description} must contain at least {MIN_ACCESS_PASSWORD_LENGTH} characters."
-        )
+        raise RuntimeError(f"{source_description} must contain at least {MIN_ACCESS_PASSWORD_LENGTH} characters.")
     if len(password) > MAX_ACCESS_PASSWORD_LENGTH:
-        raise RuntimeError(
-            f"{source_description} must contain at most {MAX_ACCESS_PASSWORD_LENGTH} characters."
-        )
+        raise RuntimeError(f"{source_description} must contain at most {MAX_ACCESS_PASSWORD_LENGTH} characters.")
     if any(ord(character) < 0x21 or ord(character) > 0x7E for character in password):
-        raise RuntimeError(
-            f"{source_description} must contain only printable ASCII characters without spaces."
-        )
+        raise RuntimeError(f"{source_description} must contain only printable ASCII characters without spaces.")
     return password
 
 
-def validate_absolute_nas_path(path: str, label: str) -> str:
+def validate_absolute_host_path(path: str, label: str) -> str:
     normalized_path = PurePosixPath(path)
     if not normalized_path.is_absolute():
-        raise RuntimeError(f"{label} must be an absolute Linux/NAS path.")
+        raise RuntimeError(f"{label} must be an absolute target Linux host path.")
     if ".." in normalized_path.parts:
         raise RuntimeError(f"{label} must not contain parent-directory components.")
     if any(ord(character) < 0x20 or ord(character) == 0x7F for character in path):
@@ -46,8 +40,8 @@ def validate_absolute_nas_path(path: str, label: str) -> str:
     return normalized_text
 
 
-def validate_non_overlapping_nas_roots(source_root: str, app_root: str) -> None:
+def validate_non_overlapping_host_roots(source_root: str, app_root: str) -> None:
     source_path = PurePosixPath(source_root)
     app_path = PurePosixPath(app_root)
     if source_path.is_relative_to(app_path) or app_path.is_relative_to(source_path):
-        raise RuntimeError("--nas-source-root and --nas-app-root must not overlap.")
+        raise RuntimeError("--host-source-root and --host-app-root must not overlap.")

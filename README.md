@@ -46,10 +46,10 @@ python3 scripts/RunRemoteLinux.py test
 The remote worker uses all detected CPU threads by default for builds and tests.
 Remote synchronization includes only Git-indexed files and refuses untracked, non-ignored paths; add new source files to the index before running the remote lane.
 
-## Recommended NAS release
+## Recommended Linux host release
 
-The NAS release flow keeps machine-specific values and the access password on
-the development Mac, while all build and Docker work stays on the x86_64 Linux
+The Linux host release flow keeps machine-specific values and the access password on
+the development host, while all build and Docker work stays on the x86_64 Linux
 worker. Create the ignored local configuration once:
 
 ```sh
@@ -60,8 +60,8 @@ chmod 600 .env.deploy
 Edit `.env.deploy` and set at least:
 
 ```text
-INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT=/volume/books/inpx
-INPX_WEB_READER_DEPLOY_NAS_APP_ROOT=/volume/docker/inpx-web-reader
+INPX_WEB_READER_DEPLOY_HOST_SOURCE_ROOT=/srv/books/inpx
+INPX_WEB_READER_DEPLOY_HOST_APP_ROOT=/srv/inpx-web-reader
 INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD=abcd-efgh-jkmn-pqrs
 ```
 
@@ -71,8 +71,8 @@ password in four readable groups and reuses it while the previous remote bundle
 exists. The downloaded value is available locally in
 `out/deploy/inpx-web-reader/secrets/inpx-web-reader-auth-token.txt`. Setting it
 explicitly in the ignored `.env.deploy` is recommended when the password must
-remain stable even if remote build output is cleaned. The NAS source and
-application roots must be absolute, non-root, and non-overlapping paths.
+remain stable even if remote build output is cleaned. The target Linux host
+source and application roots must be absolute, non-root, and non-overlapping paths.
 
 Build, verify, and download one release bundle:
 
@@ -87,28 +87,28 @@ is saved into `out/deploy/inpx-web-reader`; it is not rebuilt for packaging.
 The image tag contains the product version and Git commit (plus a dirty-tree
 hash when applicable), and the bundle contains a manifest and image checksum.
 
-Deployment to the NAS remains intentionally manual:
+Deployment to the target Linux host remains intentionally manual:
 
-1. Copy the contents of `out/deploy/inpx-web-reader` to the configured NAS
+1. Copy the contents of `out/deploy/inpx-web-reader` to the configured host
    application directory. Overwrite release files, but do not mirror with a
-   delete option and do not delete the NAS `data/` directory.
-2. On the NAS, run:
+   delete option and do not delete the host's `data/` directory.
+2. On the target host, run:
 
    ```sh
-   cd /volume/docker/inpx-web-reader
-   sh RUN_ON_NAS.sh
+   cd /srv/inpx-web-reader
+   sh RUN_ON_HOST.sh
    ```
 
-The NAS script verifies the archive checksum, loads the versioned image, starts
-Compose, and waits for health. A failed update restores the previous image when
-one is available. After a healthy update, it removes stopped containers from
-the exact `inpx-web-reader` Compose project and unused superseded
-InpxWebReader images; it never performs a global Docker prune. The credential
-stored by the current browser can later be replaced or forgotten under Settings
+The generated host script verifies the archive checksum, loads the versioned
+image, starts Compose, and waits for health. A failed update restores the
+previous image when one is available. After a healthy update, it removes
+stopped containers from the exact `inpx-web-reader` Compose project and unused
+superseded InpxWebReader images; it never performs a global Docker prune. The
+credential stored by the current browser can later be replaced or forgotten under Settings
 → Server access; this does not change the password configured on the server.
 
 `RunRemoteLinux.py bundle` remains available as an advanced unverified
-packaging command. Use `release` for normal NAS updates.
+packaging command. Use `release` for normal Linux host updates.
 
 ## Verification
 

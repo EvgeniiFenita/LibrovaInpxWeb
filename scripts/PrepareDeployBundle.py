@@ -32,14 +32,14 @@ from _common import (  # noqa: E402
     validate_parallel_jobs,
 )
 from _deploy import (  # noqa: E402
-    validate_absolute_nas_path,
+    validate_absolute_host_path,
     validate_access_password,
     validate_host_port,
-    validate_non_overlapping_nas_roots,
+    validate_non_overlapping_host_roots,
 )
 
 
-DEFAULT_IMAGE_TAG = "inpx-web-reader:nas-local"
+DEFAULT_IMAGE_TAG = "inpx-web-reader:linux-host-local"
 DEFAULT_HOST_PORT = 8080
 DEFAULT_CONVERTER_ASSET_NAME = "fbc-linux-amd64.zip"
 DEFAULT_DOCKER_PLATFORM = "linux/amd64"
@@ -56,24 +56,22 @@ BUNDLE_MANIFEST_NAME = "manifest.json"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Prepare a Linux Docker deployment bundle for inpx-web-reader."
+    parser = argparse.ArgumentParser(description="Prepare a Linux Docker deployment bundle for inpx-web-reader.")
+    parser.add_argument(
+        "--host-source-root",
+        required=True,
+        help="Absolute target Linux host path to the INPX source directory mounted read-only.",
     )
     parser.add_argument(
-        "--nas-source-root",
+        "--host-app-root",
         required=True,
-        help="Absolute NAS path to the INPX source directory mounted read-only.",
-    )
-    parser.add_argument(
-        "--nas-app-root",
-        required=True,
-        help="Absolute NAS path where this bundle will be copied and run.",
+        help="Absolute target Linux host path where this bundle will be copied and run.",
     )
     parser.add_argument(
         "--host-port",
         type=int,
         default=DEFAULT_HOST_PORT,
-        help="NAS host port exposed for the browser UI.",
+        help="Linux host port exposed for the browser UI.",
     )
     parser.add_argument(
         "--output",
@@ -88,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--docker-platform",
         default=DEFAULT_DOCKER_PLATFORM,
-        help="Docker platform for the saved NAS image; must be linux/amd64.",
+        help="Docker platform for the saved Linux host image; must be linux/amd64.",
     )
     parser.add_argument(
         "--build-jobs",
@@ -257,9 +255,7 @@ def download_file(url: str, target: Path, expected_sha256: str) -> str:
 
     actual_sha256 = digest.hexdigest()
     if actual_sha256.lower() != expected_sha256.lower():
-        raise RuntimeError(
-            f"Downloaded converter checksum mismatch: expected {expected_sha256}, got {actual_sha256}."
-        )
+        raise RuntimeError(f"Downloaded converter checksum mismatch: expected {expected_sha256}, got {actual_sha256}.")
     return actual_sha256
 
 
@@ -268,9 +264,7 @@ def extract_converter_binary(archive_path: Path, converter_dir: Path) -> Path:
     target = converter_dir / "fbc"
     with zipfile.ZipFile(archive_path) as archive:
         candidates = [
-            name
-            for name in archive.namelist()
-            if not name.endswith("/") and PurePosixPath(name).name == "fbc"
+            name for name in archive.namelist() if not name.endswith("/") and PurePosixPath(name).name == "fbc"
         ]
         if not candidates:
             raise RuntimeError(f"Converter archive does not contain an fbc executable: {archive_path}")
@@ -317,8 +311,8 @@ def write_env_file(
     *,
     image_tag: str,
     host_port: int,
-    nas_source_root: str,
-    nas_app_root: str,
+    host_source_root: str,
+    host_app_root: str,
     converter_enabled: bool = True,
 ) -> None:
     lines = [
@@ -326,12 +320,12 @@ def write_env_file(
         "COMPOSE_PROJECT_NAME=inpx-web-reader",
         f"INPX_WEB_READER_IMAGE={env_value(image_tag)}",
         f"INPX_WEB_READER_HOST_PORT={env_value(host_port)}",
-        f"INPX_WEB_READER_SOURCE_PATH={env_value(nas_source_root)}",
-        f"INPX_WEB_READER_DATA_PATH={env_value(nas_app_root + '/data')}",
+        f"INPX_WEB_READER_SOURCE_PATH={env_value(host_source_root)}",
+        f"INPX_WEB_READER_DATA_PATH={env_value(host_app_root + '/data')}",
         "INPX_WEB_READER_INPX_PATH=",
         "INPX_WEB_READER_ARCHIVE_ROOT=",
         "INPX_WEB_READER_CONVERTER_PATH=" + ("/converter/fbc" if converter_enabled else ""),
-        f"INPX_WEB_READER_AUTH_TOKEN_FILE={env_value(nas_app_root + '/secrets/inpx-web-reader-auth-token.txt')}",
+        f"INPX_WEB_READER_AUTH_TOKEN_FILE={env_value(host_app_root + '/secrets/inpx-web-reader-auth-token.txt')}",
         "INPX_WEB_READER_LOG_LEVEL=info",
         "INPX_WEB_READER_LOG_MAX_FILE_SIZE_MIB=20",
         "INPX_WEB_READER_LOG_MAX_ROTATED_FILES=4",
@@ -351,7 +345,7 @@ def write_env_file(
     if converter_enabled:
         lines.insert(
             9,
-            f"INPX_WEB_READER_CONVERTER_HOST_PATH={env_value(nas_app_root + '/converter')}",
+            f"INPX_WEB_READER_CONVERTER_HOST_PATH={env_value(host_app_root + '/converter')}",
         )
     write_text(bundle_root / ".env", "\n".join(lines))
 
@@ -416,17 +410,17 @@ def write_run_script(
     bundle_root: Path,
     *,
     host_port: int,
-    nas_source_root: str,
-    nas_app_root: str,
+    host_source_root: str,
+    host_app_root: str,
     converter_enabled: bool,
 ) -> None:
     write_text(
-        bundle_root / "RUN_ON_NAS.sh",
+        bundle_root / "RUN_ON_HOST.sh",
         f"""#!/bin/sh
 set -eu
 
-NAS_SOURCE_ROOT={shell_quote(nas_source_root)}
-NAS_APP_ROOT={shell_quote(nas_app_root)}
+HOST_SOURCE_ROOT={shell_quote(host_source_root)}
+HOST_APP_ROOT={shell_quote(host_app_root)}
 HOST_PORT={host_port}
 export COMPOSE_PROJECT_NAME=inpx-web-reader
 CONTAINER_UID=10001
@@ -530,7 +524,7 @@ load_generated_env()
         ' ./.env
     )" ||
         fail "Could not read INPX_WEB_READER_IMAGE from .env."
-    : "${{INPX_WEB_READER_IMAGE:=inpx-web-reader:nas-local}}"
+    : "${{INPX_WEB_READER_IMAGE:=inpx-web-reader:linux-host-local}}"
     case "$INPX_WEB_READER_IMAGE" in
         *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/:+-]*)
             fail "INPX_WEB_READER_IMAGE in .env contains unsupported characters."
@@ -637,16 +631,16 @@ cleanup_superseded_images()
 
 verify_image_archive_checksum()
 {{
-    checksum_file="$NAS_APP_ROOT/{IMAGE_ARCHIVE_CHECKSUM_NAME}"
+    checksum_file="$HOST_APP_ROOT/{IMAGE_ARCHIVE_CHECKSUM_NAME}"
     [ -f "$checksum_file" ] || fail "Docker image checksum is missing: $checksum_file"
 
     if command -v sha256sum >/dev/null 2>&1; then
-        (cd "$NAS_APP_ROOT" && sha256sum -c "{IMAGE_ARCHIVE_CHECKSUM_NAME}") >/dev/null ||
+        (cd "$HOST_APP_ROOT" && sha256sum -c "{IMAGE_ARCHIVE_CHECKSUM_NAME}") >/dev/null ||
             fail "Docker image archive checksum verification failed."
         return
     fi
     if command -v shasum >/dev/null 2>&1; then
-        (cd "$NAS_APP_ROOT" && shasum -a 256 -c "{IMAGE_ARCHIVE_CHECKSUM_NAME}") >/dev/null ||
+        (cd "$HOST_APP_ROOT" && shasum -a 256 -c "{IMAGE_ARCHIVE_CHECKSUM_NAME}") >/dev/null ||
             fail "Docker image archive checksum verification failed."
         return
     fi
@@ -709,15 +703,15 @@ container_can_read_source()
         --user "$candidate_uid:$candidate_gid" \\
         --read-only \\
         --cap-drop ALL \\
-        -v "$NAS_SOURCE_ROOT:/source:ro" \\
+        -v "$HOST_SOURCE_ROOT:/source:ro" \\
         "$INPX_WEB_READER_IMAGE" \\
         -lc 'test -r /source && test -x /source && find /source -maxdepth 1 -print -quit >/dev/null'
 }}
 
 choose_container_identity()
 {{
-    source_uid="$(stat -c '%u' "$NAS_SOURCE_ROOT")"
-    source_gid="$(stat -c '%g' "$NAS_SOURCE_ROOT")"
+    source_uid="$(stat -c '%u' "$HOST_SOURCE_ROOT")"
+    source_gid="$(stat -c '%g' "$HOST_SOURCE_ROOT")"
 
     if [ "$source_uid" != "0" ] && [ "$source_gid" != "0" ] &&
         container_can_read_source "$source_uid" "$source_gid"; then
@@ -747,14 +741,14 @@ choose_container_identity()
         return
     fi
 
-    log "INPX source is not readable by a safe non-root container user: $NAS_SOURCE_ROOT"
-    fail "Fix NAS source permissions or run this script as a non-root owner that can read the source."
+    log "INPX source is not readable by a safe non-root container user: $HOST_SOURCE_ROOT"
+    fail "Fix host source permissions or run this script as a non-root owner that can read the source."
 }}
 
 prepare_host_paths()
 {{
-    token_file="$NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
-    data_dir="$NAS_APP_ROOT/data"
+    token_file="$HOST_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
+    data_dir="$HOST_APP_ROOT/data"
 
     mkdir -p "$data_dir"
     chown "$CONTAINER_UID:$CONTAINER_GID" "$data_dir" 2>/dev/null ||
@@ -762,7 +756,7 @@ prepare_host_paths()
     chmod 700 "$data_dir" 2>/dev/null || true
 
     if converter_enabled; then
-        converter_dir="$NAS_APP_ROOT/converter"
+        converter_dir="$HOST_APP_ROOT/converter"
         converter_file="$converter_dir/fbc"
         chown "$CONTAINER_UID:$CONTAINER_GID" "$converter_dir" "$converter_file" 2>/dev/null ||
             fail "Could not assign $converter_file to container uid $CONTAINER_UID. Run this script with sudo."
@@ -778,7 +772,7 @@ prepare_host_paths()
 
 verify_token_readable_by_container()
 {{
-    token_file="$NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
+    token_file="$HOST_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
     if docker run --rm \\
         --entrypoint /bin/sh \\
         --user "$CONTAINER_UID:$CONTAINER_GID" \\
@@ -797,7 +791,7 @@ verify_token_readable_by_container()
 
 verify_converter_executable_by_container()
 {{
-    converter_dir="$NAS_APP_ROOT/converter"
+    converter_dir="$HOST_APP_ROOT/converter"
     if docker run --rm \\
         --entrypoint /bin/sh \\
         --user "$CONTAINER_UID:$CONTAINER_GID" \\
@@ -814,23 +808,23 @@ verify_converter_executable_by_container()
     fail "Converter is not readable and executable by the non-root container user."
 }}
 
-cd "$NAS_APP_ROOT"
+cd "$HOST_APP_ROOT"
 
-[ -d "$NAS_SOURCE_ROOT" ] || fail "INPX source directory does not exist: $NAS_SOURCE_ROOT"
-if [ ! -f "$NAS_APP_ROOT/{IMAGE_ARCHIVE_NAME}" ]; then
-    fail "Docker image archive is missing: $NAS_APP_ROOT/{IMAGE_ARCHIVE_NAME}"
+[ -d "$HOST_SOURCE_ROOT" ] || fail "INPX source directory does not exist: $HOST_SOURCE_ROOT"
+if [ ! -f "$HOST_APP_ROOT/{IMAGE_ARCHIVE_NAME}" ]; then
+    fail "Docker image archive is missing: $HOST_APP_ROOT/{IMAGE_ARCHIVE_NAME}"
 fi
-if [ ! -f "$NAS_APP_ROOT/{BUNDLE_MANIFEST_NAME}" ]; then
-    fail "Deployment manifest is missing: $NAS_APP_ROOT/{BUNDLE_MANIFEST_NAME}"
+if [ ! -f "$HOST_APP_ROOT/{BUNDLE_MANIFEST_NAME}" ]; then
+    fail "Deployment manifest is missing: $HOST_APP_ROOT/{BUNDLE_MANIFEST_NAME}"
 fi
-if [ ! -f "$NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt" ]; then
+if [ ! -f "$HOST_APP_ROOT/secrets/inpx-web-reader-auth-token.txt" ]; then
     fail "Access-password file is missing."
 fi
-if converter_enabled && [ ! -f "$NAS_APP_ROOT/docker-compose.converter.yml" ]; then
-    fail "Converter Compose override is missing: $NAS_APP_ROOT/docker-compose.converter.yml"
+if converter_enabled && [ ! -f "$HOST_APP_ROOT/docker-compose.converter.yml" ]; then
+    fail "Converter Compose override is missing: $HOST_APP_ROOT/docker-compose.converter.yml"
 fi
-if converter_enabled && [ ! -f "$NAS_APP_ROOT/converter/fbc" ]; then
-    fail "Converter executable is missing: $NAS_APP_ROOT/converter/fbc"
+if converter_enabled && [ ! -f "$HOST_APP_ROOT/converter/fbc" ]; then
+    fail "Converter executable is missing: $HOST_APP_ROOT/converter/fbc"
 fi
 
 load_generated_env
@@ -849,7 +843,7 @@ else
 fi
 
 log "Loading Docker image."
-docker load -i "$NAS_APP_ROOT/{IMAGE_ARCHIVE_NAME}"
+docker load -i "$HOST_APP_ROOT/{IMAGE_ARCHIVE_NAME}"
 loaded_image_id="$(image_id_for_tag "$INPX_WEB_READER_IMAGE")"
 [ -n "$loaded_image_id" ] || fail "Docker image archive did not provide image tag $INPX_WEB_READER_IMAGE."
 loaded_image_platform="$(image_platform_for_tag "$INPX_WEB_READER_IMAGE")"
@@ -896,11 +890,11 @@ if command -v systemctl >/dev/null 2>&1; then
         log "Docker service is enabled for host boot."
     else
         log "WARNING: Docker service is not reported as enabled by systemctl."
-        log "Enable Docker autostart in UGOS if the container does not come back after a NAS reboot."
+        log "Enable Docker autostart if the container does not come back after a host reboot."
     fi
 else
     log "systemctl is not available; verified container restart policy only."
-    log "Make sure Docker itself starts after NAS reboot."
+    log "Make sure Docker itself starts after a host reboot."
 fi
 
 log "Waiting for container health."
@@ -920,9 +914,9 @@ lan_ip="$(detect_lan_ip || true)"
 if [ -n "$lan_ip" ]; then
     log "inpx-web-reader is running at: http://$lan_ip:$HOST_PORT/"
 else
-    log "inpx-web-reader is running at: http://<NAS-IP>:$HOST_PORT/"
+    log "inpx-web-reader is running at: http://<HOSTNAME-OR-IP>:$HOST_PORT/"
 fi
-log "Access-password file: $NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
+log "Access-password file: $HOST_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
 """,
         executable=True,
     )
@@ -931,19 +925,19 @@ log "Access-password file: $NAS_APP_ROOT/secrets/inpx-web-reader-auth-token.txt"
 def write_stop_script(
     bundle_root: Path,
     *,
-    nas_app_root: str,
+    host_app_root: str,
     converter_enabled: bool,
 ) -> None:
     write_text(
-        bundle_root / "STOP_ON_NAS.sh",
+        bundle_root / "STOP_ON_HOST.sh",
         f"""#!/bin/sh
 set -eu
 
-NAS_APP_ROOT={shell_quote(nas_app_root)}
+HOST_APP_ROOT={shell_quote(host_app_root)}
 CONVERTER_ENABLED={1 if converter_enabled else 0}
 export COMPOSE_PROJECT_NAME=inpx-web-reader
 
-cd "$NAS_APP_ROOT"
+cd "$HOST_APP_ROOT"
 
 if docker compose version >/dev/null 2>&1; then
     compose_command="docker compose"
@@ -968,7 +962,7 @@ def write_readme(
     bundle_root: Path,
     *,
     host_port: int,
-    nas_app_root: str,
+    host_app_root: str,
     converter_enabled: bool,
 ) -> None:
     conversion_status = (
@@ -977,7 +971,7 @@ def write_readme(
         else "EPUB conversion is disabled; original FB2 downloads remain available."
     )
     write_text(
-        bundle_root / "README_NAS_DEPLOY.md",
+        bundle_root / "README_HOST_DEPLOY.md",
         f"""# InpxWebReader deployment bundle
 
 This folder is generated by `scripts/PrepareDeployBundle.py`.
@@ -985,14 +979,14 @@ This folder is generated by `scripts/PrepareDeployBundle.py`.
 After copying this folder's contents to:
 
 ```sh
-{nas_app_root}
+{host_app_root}
 ```
 
-start or update the server on the NAS:
+start or update the server on the target Linux host:
 
 ```sh
-cd {nas_app_root}
-sh RUN_ON_NAS.sh
+cd {host_app_root}
+sh RUN_ON_HOST.sh
 ```
 
 The script verifies the image archive checksum, loads `{IMAGE_ARCHIVE_NAME}`,
@@ -1007,13 +1001,13 @@ InpxWebReader images. It never runs a global Docker prune.
 Open the web UI from your LAN:
 
 ```text
-http://<NAS-IP>:{host_port}/
+http://<HOSTNAME-OR-IP>:{host_port}/
 ```
 
 The access password is stored at:
 
 ```sh
-{nas_app_root}/secrets/inpx-web-reader-auth-token.txt
+{host_app_root}/secrets/inpx-web-reader-auth-token.txt
 ```
 
 When this bundle is regenerated into the same local output directory, the
@@ -1021,7 +1015,7 @@ existing password is reused unless `--token-file` or
 `INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD` is supplied.
 
 The bundle also contains `manifest.json` and `{IMAGE_ARCHIVE_CHECKSUM_NAME}` so
-the NAS can reject a damaged or partially copied image archive before loading
+the host can reject a damaged or partially copied image archive before loading
 it.
 
 Do not commit or publish this generated bundle. It contains a private password
@@ -1037,9 +1031,7 @@ def inspect_image_property(
     env: dict[str, str],
 ) -> str:
     return subprocess.run(
-        resolve_command(
-            ["docker", "image", "inspect", "--format", format_value, image_tag]
-        ),
+        resolve_command(["docker", "image", "inspect", "--format", format_value, image_tag]),
         cwd=repo_root,
         env=out_scoped_environment(repo_root, env),
         check=True,
@@ -1061,9 +1053,7 @@ def verify_image_platform(
         env,
     )
     if inspected_platform != "linux/amd64":
-        raise RuntimeError(
-            f"Saved runtime image platform is {inspected_platform or '<empty>'}, expected linux/amd64."
-        )
+        raise RuntimeError(f"Saved runtime image platform is {inspected_platform or '<empty>'}, expected linux/amd64.")
 
 
 def save_existing_image(
@@ -1072,7 +1062,7 @@ def save_existing_image(
     image_tag: str,
 ) -> None:
     ensure_linux_host()
-    env = build_out_tool_environment(repo_root, "nas-deploy")
+    env = build_out_tool_environment(repo_root, "host-deploy")
     ensure_docker_engine(repo_root, env)
     verify_image_platform(repo_root, image_tag, env)
     run(["docker", "save", "-o", str(bundle_root / IMAGE_ARCHIVE_NAME), image_tag], repo_root, env=env)
@@ -1086,7 +1076,7 @@ def build_and_save_image(
     build_jobs: int,
 ) -> None:
     ensure_linux_host()
-    env = build_out_tool_environment(repo_root, "nas-deploy")
+    env = build_out_tool_environment(repo_root, "host-deploy")
     ensure_docker_engine(repo_root, env)
     run(
         [
@@ -1128,7 +1118,7 @@ def write_bundle_manifest(
     if not image_archive.is_file():
         return
 
-    env = build_out_tool_environment(repo_root, "nas-deploy")
+    env = build_out_tool_environment(repo_root, "host-deploy")
     image_id = inspect_image_property(repo_root, image_tag, "{{.Id}}", env)
     image_platform = inspect_image_property(
         repo_root,
@@ -1173,9 +1163,9 @@ def prepare_bundle(args: argparse.Namespace) -> Path:
     repo_root = repository_root()
     repo_out_root = out_root(repo_root)
     output_dir = resolve_output_dir(repo_root, args.output)
-    nas_source_root = validate_absolute_nas_path(args.nas_source_root, "--nas-source-root")
-    nas_app_root = validate_absolute_nas_path(args.nas_app_root, "--nas-app-root")
-    validate_non_overlapping_nas_roots(nas_source_root, nas_app_root)
+    host_source_root = validate_absolute_host_path(args.host_source_root, "--host-source-root")
+    host_app_root = validate_absolute_host_path(args.host_app_root, "--host-app-root")
+    validate_non_overlapping_host_roots(host_source_root, host_app_root)
     validate_host_port(args.host_port)
     build_jobs = args.build_jobs if args.build_jobs is not None else default_parallel_jobs()
     validate_parallel_jobs(build_jobs)
@@ -1190,27 +1180,27 @@ def prepare_bundle(args: argparse.Namespace) -> Path:
         output_dir,
         image_tag=args.image_tag,
         host_port=args.host_port,
-        nas_source_root=nas_source_root,
-        nas_app_root=nas_app_root,
+        host_source_root=host_source_root,
+        host_app_root=host_app_root,
         converter_enabled=converter_enabled,
     )
     write_token_file(output_dir, auth_token)
     write_run_script(
         output_dir,
         host_port=args.host_port,
-        nas_source_root=nas_source_root,
-        nas_app_root=nas_app_root,
+        host_source_root=host_source_root,
+        host_app_root=host_app_root,
         converter_enabled=converter_enabled,
     )
     write_stop_script(
         output_dir,
-        nas_app_root=nas_app_root,
+        host_app_root=host_app_root,
         converter_enabled=converter_enabled,
     )
     write_readme(
         output_dir,
         host_port=args.host_port,
-        nas_app_root=nas_app_root,
+        host_app_root=host_app_root,
         converter_enabled=converter_enabled,
     )
 
@@ -1245,9 +1235,9 @@ def prepare_bundle(args: argparse.Namespace) -> Path:
             )
 
     if stages:
-        run_timed_stages(stages, success_message="NAS deployment bundle prepared successfully.")
+        run_timed_stages(stages, success_message="Linux host deployment bundle prepared successfully.")
     else:
-        print("==> NAS deployment bundle files prepared successfully.", flush=True)
+        print("==> Linux host deployment bundle files prepared successfully.", flush=True)
 
     write_bundle_manifest(
         repo_root,

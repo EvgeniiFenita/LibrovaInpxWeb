@@ -17,18 +17,18 @@ from _common import (  # noqa: E402
     validate_parallel_jobs,
 )
 from _deploy import (  # noqa: E402
-    validate_absolute_nas_path,
+    validate_absolute_host_path,
     validate_host_port,
-    validate_non_overlapping_nas_roots,
+    validate_non_overlapping_host_roots,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Verify InpxWebReader and package the same Docker image as a NAS release bundle."
+        description="Verify InpxWebReader and package the same Docker image as a Linux host release bundle."
     )
-    parser.add_argument("--nas-source-root", required=True)
-    parser.add_argument("--nas-app-root", required=True)
+    parser.add_argument("--host-source-root", required=True)
+    parser.add_argument("--host-app-root", required=True)
     parser.add_argument("--host-port", type=int, default=8080)
     parser.add_argument("--image-tag", required=True)
     parser.add_argument("--docker-platform", default="linux/amd64")
@@ -78,10 +78,10 @@ def build_bundle_command(args: argparse.Namespace) -> list[str]:
     command = [
         sys.executable,
         "scripts/PrepareDeployBundle.py",
-        "--nas-source-root",
-        args.nas_source_root,
-        "--nas-app-root",
-        args.nas_app_root,
+        "--host-source-root",
+        args.host_source_root,
+        "--host-app-root",
+        args.host_app_root,
         "--host-port",
         str(args.host_port),
         "--image-tag",
@@ -109,9 +109,9 @@ def main() -> int:
     started_at = time.perf_counter()
     args = parse_args()
     ensure_linux_host()
-    args.nas_source_root = validate_absolute_nas_path(args.nas_source_root, "--nas-source-root")
-    args.nas_app_root = validate_absolute_nas_path(args.nas_app_root, "--nas-app-root")
-    validate_non_overlapping_nas_roots(args.nas_source_root, args.nas_app_root)
+    args.host_source_root = validate_absolute_host_path(args.host_source_root, "--host-source-root")
+    args.host_app_root = validate_absolute_host_path(args.host_app_root, "--host-app-root")
+    validate_non_overlapping_host_roots(args.host_source_root, args.host_app_root)
     validate_host_port(args.host_port)
     if args.token_file is not None and not args.token_file.is_file():
         raise RuntimeError(f"--token-file does not exist: {args.token_file}")
@@ -156,7 +156,7 @@ def main() -> int:
                 lambda: run_command(build_linux_test_command(args), repo_root),
             ),
             TimedStage(
-                "Package verified NAS bundle",
+                "Package verified Linux host bundle",
                 lambda: run_command(build_bundle_command(args), repo_root),
             ),
         ]
@@ -166,7 +166,7 @@ def main() -> int:
         stages,
         total_started_at=started_at,
         total_label="Total RunRelease.py time",
-        success_message="Verified NAS release bundle prepared successfully.",
+        success_message="Verified Linux host release bundle prepared successfully.",
         clock=time.perf_counter,
     )
     return 0

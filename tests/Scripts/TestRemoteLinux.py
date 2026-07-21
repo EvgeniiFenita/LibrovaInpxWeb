@@ -473,11 +473,11 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
         self.assertIn("release", result.stdout)
         self.assertIn("bundle", result.stdout)
 
-    def test_deploy_env_loads_nas_paths_password_and_converter_defaults(self) -> None:
+    def test_deploy_env_loads_host_paths_password_and_converter_defaults(self) -> None:
         env_path = self._repo_root / ".env.deploy"
         env_path.write_text(
-            "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT=/volume/books/inpx\n"
-            "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT=/volume/docker/inpx-web-reader\n"
+            "INPX_WEB_READER_DEPLOY_HOST_SOURCE_ROOT=/srv/books/inpx\n"
+            "INPX_WEB_READER_DEPLOY_HOST_APP_ROOT=/srv/inpx-web-reader\n"
             "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD=abcd-efgh-jkmn-pqrs\n"
             "INPX_WEB_READER_DEPLOY_HOST_PORT=8090\n"
             "INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED=false\n",
@@ -486,8 +486,8 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
 
         config = self._module.load_deploy_config(Path(".env.deploy"), self._repo_root)
 
-        self.assertEqual(config.nas_source_root, "/volume/books/inpx")
-        self.assertEqual(config.nas_app_root, "/volume/docker/inpx-web-reader")
+        self.assertEqual(config.host_source_root, "/srv/books/inpx")
+        self.assertEqual(config.host_app_root, "/srv/inpx-web-reader")
         self.assertEqual(config.access_password, "abcd-efgh-jkmn-pqrs")
         self.assertEqual(config.host_port, 8090)
         self.assertFalse(config.converter_enabled)
@@ -495,15 +495,15 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
     def test_deploy_args_reject_unsafe_paths_and_password_before_remote_work(self) -> None:
         env_path = self._repo_root / ".env.deploy"
         env_path.write_text(
-            "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT=/volume/books/inpx\n"
-            "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT=/volume/books/inpx/deployment\n"
+            "INPX_WEB_READER_DEPLOY_HOST_SOURCE_ROOT=/srv/books/inpx\n"
+            "INPX_WEB_READER_DEPLOY_HOST_APP_ROOT=/srv/books/inpx/deployment\n"
             "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD=пароль-доступа\n",
             encoding="utf-8",
         )
         args = argparse_namespace(
             deploy_env_file=Path(".env.deploy"),
-            nas_source_root=None,
-            nas_app_root=None,
+            host_source_root=None,
+            host_app_root=None,
             host_port=None,
             converter_version=None,
             converter_asset_name=None,
@@ -514,18 +514,18 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
             self._module.resolve_deploy_args(args, self._repo_root)
 
         env_path.write_text(
-            "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT=/volume/books/inpx\n"
-            "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT=/volume/docker/inpx-web-reader\n"
+            "INPX_WEB_READER_DEPLOY_HOST_SOURCE_ROOT=/srv/books/inpx\n"
+            "INPX_WEB_READER_DEPLOY_HOST_APP_ROOT=/srv/inpx-web-reader\n"
             "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD=пароль-доступа\n",
             encoding="utf-8",
         )
-        args.nas_source_root = None
-        args.nas_app_root = None
+        args.host_source_root = None
+        args.host_app_root = None
         with self.assertRaisesRegex(RuntimeError, "printable ASCII characters without spaces"):
             self._module.resolve_deploy_args(args, self._repo_root)
 
-        args.nas_source_root = "/volume/books/inpx"
-        args.nas_app_root = "/volume/docker/inpx-web-reader"
+        args.host_source_root = "/srv/books/inpx"
+        args.host_app_root = "/srv/inpx-web-reader"
         args.host_port = 70000
         with self.assertRaisesRegex(RuntimeError, "range 1..65535"):
             self._module.resolve_deploy_args(args, self._repo_root)
@@ -540,8 +540,8 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
         self.assertEqual(
             keys,
             {
-                "INPX_WEB_READER_DEPLOY_NAS_SOURCE_ROOT",
-                "INPX_WEB_READER_DEPLOY_NAS_APP_ROOT",
+                "INPX_WEB_READER_DEPLOY_HOST_SOURCE_ROOT",
+                "INPX_WEB_READER_DEPLOY_HOST_APP_ROOT",
                 "INPX_WEB_READER_DEPLOY_ACCESS_PASSWORD",
                 "INPX_WEB_READER_DEPLOY_HOST_PORT",
                 "INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED",
@@ -691,10 +691,10 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
                 [
                     "RunRemoteLinux.py",
                     "bundle",
-                    "--nas-source-root",
-                    "/volume/books",
-                    "--nas-app-root",
-                    "/volume/inpx-web-reader",
+                    "--host-source-root",
+                    "/srv/books",
+                    "--host-app-root",
+                    "/srv/inpx-web-reader",
                     "--token-file",
                     str(token_file),
                 ],
@@ -731,8 +731,8 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
 
     def test_bundle_command_forwards_remote_token_path(self) -> None:
         args = argparse_namespace(
-            nas_source_root="/volume/books",
-            nas_app_root="/volume/inpx-web-reader",
+            host_source_root="/srv/books",
+            host_app_root="/srv/inpx-web-reader",
             host_port=8090,
             image_tag="inpx-web-reader:test",
             docker_platform="linux/amd64",
@@ -756,8 +756,8 @@ class RemoteLinuxRunnerTests(unittest.TestCase):
 
     def test_release_command_uses_single_verified_image_tag(self) -> None:
         args = argparse_namespace(
-            nas_source_root="/volume/books",
-            nas_app_root="/volume/inpx-web-reader",
+            host_source_root="/srv/books",
+            host_app_root="/srv/inpx-web-reader",
             host_port=8090,
             image_tag="inpx-web-reader:1.2.0-abcdef123456",
             docker_platform="linux/amd64",

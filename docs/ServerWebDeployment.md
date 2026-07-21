@@ -10,7 +10,7 @@ docker build -f deploy/inpx-web-reader/Dockerfile -t inpx-web-reader:latest .
 
 The supported image platform is `linux/amd64`; the native toolchain and optional bundled converter are x86_64. CMake configuration, remote bootstrap/test helpers, Docker build arguments, image inspection, Compose, and generated bundle scripts fail closed on any other architecture instead of relying on emulation.
 
-The runtime image contains `/opt/inpx-web-reader/inpx-web-reader` and `/opt/inpx-web-reader/web`. Its default identity is unprivileged uid/gid `10001`; base Compose can select another explicit non-root uid/gid for NAS source and secret permissions. The service drops capabilities, uses a read-only root filesystem in Compose, and exposes port 8080.
+The runtime image contains `/opt/inpx-web-reader/inpx-web-reader` and `/opt/inpx-web-reader/web`. Its default identity is unprivileged uid/gid `10001`; base Compose can select another explicit non-root uid/gid to match source and secret permissions on the target host. The service drops capabilities, uses a read-only root filesystem in Compose, and exposes port 8080.
 
 Required mounts:
 
@@ -99,22 +99,22 @@ The orchestrator creates a temporary source snapshot under local `out/` from Git
 
 The development-side orchestrator is supported on Windows and macOS. It selects the SSH executable beside `rsync` when available and creates a host-native temporary askpass helper under `out/`; all configure, build, test, and Docker work still executes only on the Linux worker.
 
-## NAS release bundle
+## Linux host release bundle
 
 The recommended flow uses two ignored repository-root files with different
 ownership:
 
 - `.env` contains the remote Linux worker connection (`INPX_WEB_READER_BUILD_*`).
-- `.env.deploy` contains NAS release defaults (`INPX_WEB_READER_DEPLOY_*`).
+- `.env.deploy` contains Linux host release defaults (`INPX_WEB_READER_DEPLOY_*`).
 
 Create the deployment file from `.env.deploy.example`. The supported fields
-are the NAS source and application roots, host port, access password, and
+are the target Linux host source and application roots, host port, access password, and
 converter enable/version/asset settings. Command-line values override the file
 where both forms exist. The access password is staged through an owner-only
 temporary file under `out/`, copied to an owner-only remote input, and removed
 after the remote job; it is never placed in the SSH command or logs.
 Custom passwords contain 12–256 printable ASCII characters without spaces so
-the same value is safe in the browser's HTTP `Authorization` header. Both NAS
+the same value is safe in the browser's HTTP `Authorization` header. Both host
 roots must be absolute, must not be `/`, and must not overlap; this keeps the
 writable application tree outside the read-only INPX source.
 
@@ -138,18 +138,18 @@ The default image tag is
 `inpx-web-reader:<version>-<git-sha>`; a dirty Git-indexed source snapshot adds
 a stable diff hash. `manifest.json` records the version, commit, dirty flag, image ID,
 platform, archive digest, and converter state. `inpx-web-reader.tar.sha256`
-allows the NAS script to reject archive corruption before `docker load`.
+allows the generated host script to reject archive corruption before `docker load`.
 
 The output defaults to `out/deploy/inpx-web-reader` and contains the image
 archive, checksum, manifest, Compose files, private password layout, optional
 converter, and run/stop scripts. Deployment itself is manual: copy those files
-to the configured NAS application root without deleting its persistent `data/`
-directory, then run `sh RUN_ON_NAS.sh` in that directory.
+to the configured host application root without deleting its persistent `data/`
+directory, then run `sh RUN_ON_HOST.sh` in that directory.
 When no password is configured, the generated value is in
 `out/deploy/inpx-web-reader/secrets/inpx-web-reader-auth-token.txt`; it is not
 printed to the terminal.
 
-`RUN_ON_NAS.sh` selects a source-readable non-root uid/gid and verifies source,
+`RUN_ON_HOST.sh` selects a source-readable non-root uid/gid and verifies source,
 password, converter, data, image platform, restart policy, and container health.
 It captures the previously running Compose container's image before loading the
 new one. A Compose, restart-policy, or health failure retags and restarts that
@@ -165,13 +165,13 @@ healthy deployment:
 
 This cleanup replaces the old behavior that retained every superseded image
 which still had a tag. Versioned releases therefore remain traceable without
-accumulating unused historical images on the NAS.
+accumulating unused historical images on the host.
 
 By default the bundle downloads and wires the optional converter. Set
 `INPX_WEB_READER_DEPLOY_CONVERTER_ENABLED=false` or pass
 `--skip-converter-download` for a genuinely converter-free bundle: no converter
 mount or override is used, conversion stays disabled even if an older override
-remains on the NAS.
+remains on the host.
 
 `RunRemoteLinux.py bundle` remains an advanced compatibility command that
 packages without the full release verification sequence.
